@@ -1,0 +1,26 @@
+{
+    "name": "cloudrepublic/shield-whatsapp-mfa",
+    "description": "WhatsApp OTP MFA action for CodeIgniter Shield.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "codeigniter4",
+        "codeigniter",
+        "shield",
+        "mfa",
+        "2fa",
+        "whatsapp",
+        "otp"
+    ],
+    "require": {
+        "php": "^8.1",
+        "codeigniter4/framework": "^4.3",
+        "codeigniter4/shield": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "WhatsAppMfa\\": "src/"
+        }
+    },
+    "minimum-stability": "stable"
+}
