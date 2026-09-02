@@ -139,6 +139,30 @@ configured. You don't need to add routes yourself.
    `app/Config/WhatsAppMfa.php` (`$metaTemplateName` /
    `$twilioContentSid`) to match what you got approved.
 
+8. **If you'd rather verify a phone number at registration time
+   instead of (or in addition to) self-service**, register
+   `WhatsAppActivator` for `'register'` in `app/Config/Auth.php`:
+
+   ```php
+   public array $actions = [
+       'register' => \WhatsAppMfa\Authentication\Actions\WhatsAppActivator::class,
+       'login'    => \WhatsAppMfa\Authentication\Actions\WhatsAppMfa::class,
+   ];
+   ```
+
+   Then add `WhatsAppActivator`'s own routes from `routes-snippet.php`
+   - **including its "skip" route by default.** The enrollment/verify
+   views always render a "skip for now" link, regardless of whether
+   this route exists - omitting it is safe (the views detect a missing
+   route and simply hide the link, rather than throwing when the very
+   first user registers), but you'd be silently taking away a "skip"
+   option from every new user unless that's actually what you want
+   (e.g. because MFA is mandatory for everyone via
+   `shield-mfa-dispatcher`'s `$required`/`$requiredMethodsForGroups`).
+   If you deliberately don't want "skip" offered at all, omitting the
+   route is now enough on its own - you don't need to also edit the
+   views.
+
 ## Self-service phone verification
 
 `WhatsAppSettingsController` gives an already-logged-in user their own
@@ -195,7 +219,7 @@ account's own, entirely unrelated verification failed with a
 duplicate-key database error. This is Shield's own base schema, not
 something this package should (or safely could) alter - the exact same
 bug, and the exact same fix, found and applied to
-`shield-mfa-dispatcher`'s `MfaPreference` (see that package's README
+`shield-mfa-dispatcher`'s `MfaPreference` (see that [package's]('https://github.com/CloudRepublic-io/shield-mfa-dispatcher') README
 for the fuller account of the same underlying pattern).
 
 `PhoneNumberStore` now stores the verified number through
@@ -501,7 +525,7 @@ rather than needing it discovered here separately.
 
 ## Tests
 
-**If you're using `shield-mfa-dispatcher`** (or anything else that
+**If you're using `shield-mfa-dispatcher` [package]('https://github.com/CloudRepublic-io/shield-mfa-dispatcher')** (or anything else that
 makes `Config\Auth::$actions` point at something other than
 `WhatsAppMfa`/`WhatsAppActivator` directly): the confirmed fixes
 `shield-totp-mfa` needed for this exact same architecture (session

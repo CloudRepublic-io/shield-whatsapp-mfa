@@ -31,11 +31,13 @@
     </button>
 </form>
 
+<?php if (\Config\Services::routes()->reverseRoute('whatsapp-activator-skip') !== false) : ?>
 <form method="post" action="<?= url_to('whatsapp-activator-skip') ?>" class="mt-2">
     <?= csrf_field() ?>
     <button type="submit" class="btn btn-link p-0">
         <?= lang('WhatsAppMfa.skipButton') ?>
     </button>
 </form>
+<?php endif ?>
 
 <?= $this->endSection() ?>
