@@ -7,6 +7,7 @@ namespace WhatsAppMfa\Authentication\Actions;
 use CodeIgniter\HTTP\IncomingRequest;
 use CodeIgniter\HTTP\Response;
 use CodeIgniter\Shield\Authentication\Actions\ActionInterface;
+use CodeIgniter\Shield\Authentication\Actions\ConditionalActionInterface;
 use CodeIgniter\Shield\Authentication\Authenticators\Session;
 use CodeIgniter\Shield\Entities\User;
 use CodeIgniter\Shield\Exceptions\RuntimeException;
@@ -53,8 +54,38 @@ use WhatsAppMfa\Sender\WhatsAppSenderInterface;
  * (PhoneNumberStore::ID_TYPE_PHONE_ACTIVATE) purely so Shield's
  * pending-check has something to find before a phone number is even
  * known - see that class's doc comment for the full explanation.
+ *
+ * IMPLEMENTS ConditionalActionInterface - CARRIED OVER FROM
+ * shield-passkey-mfa, where a confirmed, real user report showed a
+ * user who had already enrolled still being routed into
+ * PasskeyActivator's own enrollment flow on a later, ordinary login
+ * (paired with shield-mfa-dispatcher: register=Activator,
+ * login=MfaDispatcher) - despite shield-mfa-dispatcher's own
+ * resolveRequiredMethod() correctly resolving the user as already
+ * enrolled. Direct log tracing there confirmed Shield itself was
+ * routing straight to the register slot's activator, never even
+ * reaching the login slot's action for that request.
+ *
+ * Confirmed against Shield's own official documentation on Auth
+ * Actions: a custom action can implement ConditionalActionInterface's
+ * appliesTo(User $user): bool to tell Shield directly whether it
+ * should be considered pending for a given user at all - "when
+ * appliesTo() returns false, Shield does not start the action and
+ * ignores stored identities for that action while the condition
+ * remains false." Without this, Shield apparently keeps discovering a
+ * "pending" register action for a user long after they've actually
+ * finished registering. The most likely mechanism (not fully traced
+ * through Shield's own source - see shield-passkey-mfa's own README
+ * for the same honest caveat): ID_TYPE_PHONE_ACTIVATE is a temporary
+ * marker created before a phone number is even known - if it's never
+ * cleaned up once registration completes, Shield could keep finding a
+ * match for the register slot's own type indefinitely. appliesTo()
+ * below sidesteps the question of the exact mechanism entirely:
+ * whatever the reason Shield might still consider this pending,
+ * telling it directly not to once the user already has a verified
+ * number is the documented, correct fix regardless.
  */
-class WhatsAppActivator implements ActionInterface
+class WhatsAppActivator implements ActionInterface, ConditionalActionInterface
 {
     use CompletesPendingAction;
 
@@ -65,6 +96,21 @@ class WhatsAppActivator implements ActionInterface
     {
         $this->store  = new PhoneNumberStore();
         $this->config = config('WhatsAppMfa');
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * Confirmed via Shield's own docs: "may be called more than once
+     * while Shield checks for actions, so keep it deterministic, free
+     * of side effects, and fail closed when the condition cannot be
+     * determined." hasVerifiedPhoneNumber() is a plain, read-only DB
+     * check - no side effects, deterministic for a given user's stored
+     * state.
+     */
+    public function appliesTo(User $user): bool
+    {
+        return ! $this->store->hasVerifiedPhoneNumber($user);
     }
 
     public function show(): string

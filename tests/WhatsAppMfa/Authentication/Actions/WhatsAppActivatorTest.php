@@ -355,4 +355,39 @@ final class WhatsAppActivatorTest extends CIUnitTestCase
         // actually ran than comparing raw redirect URLs would be.
         $this->assertSame(lang('WhatsAppMfa.successMessage'), session('message'));
     }
+
+    // -------------------------------------------------------------------
+    // appliesTo() - THE confirmed fix, carried over from
+    // shield-passkey-mfa's own confirmed resolution of a real bug: a
+    // user with an already-enrolled method was still routed into that
+    // method's own enrollment flow on later, ordinary logins. See this
+    // class's own doc comment for the full account.
+    // -------------------------------------------------------------------
+
+    public function testAppliesToReturnsTrueForAUserWithNoVerifiedNumber(): void
+    {
+        $user      = $this->makeUser();
+        $activator = new WhatsAppActivator();
+
+        $this->assertTrue($activator->appliesTo($user));
+    }
+
+    /**
+     * THE regression test for the actual bug. beginVerification()
+     * returns the real code directly, so this doesn't need
+     * FakeWhatsAppSender at all - no message actually needs to be
+     * "sent" to complete a real verification here.
+     */
+    public function testAppliesToReturnsFalseForAUserWithAVerifiedNumber(): void
+    {
+        $user  = $this->makeUser();
+        $store = new PhoneNumberStore();
+
+        $code = $store->beginVerification($user, '+15551234567');
+        $store->confirmVerification($user, $code);
+
+        $activator = new WhatsAppActivator();
+
+        $this->assertFalse($activator->appliesTo($user));
+    }
 }

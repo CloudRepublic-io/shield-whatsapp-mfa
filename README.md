@@ -312,6 +312,42 @@ provider API directly.
   still expire and be resendable rather than assumed to arrive
   immediately.
 
+## A user with an already-verified number was still routed into enrollment - fixed
+
+**Fixed in the current version.** Carried over from a confirmed, real
+fix in `shield-passkey-mfa`: if you're pairing this package with
+`shield-mfa-dispatcher` (`register = WhatsAppActivator::class`,
+`login = MfaDispatcher::class`), a user who had already verified a
+WhatsApp number could still be shown `WhatsAppActivator`'s own
+enrollment prompt on a later, ordinary login - despite
+`shield-mfa-dispatcher`'s own resolution logic correctly recognizing
+them as already enrolled. Log tracing in the passkey package's own
+investigation confirmed Shield itself was routing straight to the
+`register` slot's activator, never reaching the `login` slot's action
+at all for that request.
+
+Confirmed against Shield's own official documentation on Auth Actions:
+a custom action can implement `ConditionalActionInterface`'s
+`appliesTo(User $user): bool` to tell Shield directly whether it
+should be considered pending for a given user at all - "when
+`appliesTo()` returns false, Shield does not start the action and
+ignores stored identities for that action while the condition remains
+false." `WhatsAppActivator` didn't implement this. The likely
+mechanism (not fully traced through Shield's own source - an honest
+caveat, not a fully root-caused claim):
+`PhoneNumberStore::ID_TYPE_PHONE_ACTIVATE` is a temporary marker
+created before a phone number is even known; if it's never cleaned up
+once registration completes, Shield could keep finding a match for the
+`register` slot's own type indefinitely.
+
+**Fixed:** `WhatsAppActivator` now implements
+`ConditionalActionInterface`, returning `false` from `appliesTo()` once
+the user already has a verified number. Genuine test coverage here -
+`WhatsAppActivatorTest` completes a real verification (using
+`PhoneNumberStore::beginVerification()`'s own returned code directly,
+no message actually needing to be "sent") and confirms `appliesTo()`
+correctly returns `false` afterward.
+
 ## If the page loads but shows nothing at all
 
 The views in this package wrap their content in a section named
