@@ -2,19 +2,19 @@
 
 <?= $this->section('main') ?>
 
-<h1 class="h3 mb-3"><?= lang('WhatsAppMfa.enrollHeading') ?></h1>
+<h1 class="h3 mb-3"><?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.enrollHeading') ?></h1>
 
 <?php if (session('error')) : ?>
     <div class="alert alert-danger"><?= esc(session('error')) ?></div>
 <?php endif ?>
 
-<p><?= lang('WhatsAppMfa.enrollIntro') ?></p>
+<p><?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.enrollIntro') ?></p>
 
 <form method="post" action="<?= url_to('auth-action-handle') ?>">
     <?= csrf_field() ?>
 
     <div class="mb-3">
-        <label for="phone" class="form-label"><?= lang('WhatsAppMfa.phoneLabel') ?></label>
+        <label for="phone" class="form-label"><?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.phoneLabel') ?></label>
         <input
             type="tel"
             id="phone"

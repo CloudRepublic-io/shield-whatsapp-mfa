@@ -7,6 +7,7 @@ namespace WhatsAppMfa\Controllers;
 use CodeIgniter\Controller;
 use CodeIgniter\HTTP\RedirectResponse;
 use Config\WhatsAppMfa as WhatsAppMfaConfig;
+use WhatsAppMfa\Libraries\ChannelLabel;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
 use WhatsAppMfa\Sender\WhatsAppSenderInterface;
 
@@ -93,7 +94,7 @@ class WhatsAppSettingsController extends Controller
             return redirect()->back()->with('error', lang('WhatsAppMfa.invalidCode'));
         }
 
-        return redirect()->route('whatsapp-settings')->with('message', lang('WhatsAppMfa.phoneVerifiedMessage'));
+        return redirect()->route('whatsapp-settings')->with('message', ChannelLabel::inject('WhatsAppMfa.phoneVerifiedMessage'));
     }
 
     public function disable(): RedirectResponse
@@ -101,7 +102,7 @@ class WhatsAppSettingsController extends Controller
         $user = auth()->user();
         $this->store->removeVerifiedPhoneNumber($user);
 
-        return redirect()->route('whatsapp-settings')->with('message', lang('WhatsAppMfa.phoneRemovedMessage'));
+        return redirect()->route('whatsapp-settings')->with('message', ChannelLabel::inject('WhatsAppMfa.phoneRemovedMessage'));
     }
 
     /**

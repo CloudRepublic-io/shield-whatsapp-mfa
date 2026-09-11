@@ -1,0 +1,96 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\WhatsAppMfa\Sender;
+
+use CodeIgniter\Test\CIUnitTestCase;
+use Config\WhatsAppMfa as WhatsAppMfaConfig;
+use Tests\WhatsAppMfa\Support\TestableTwilioWhatsAppSender;
+
+/**
+ * Tests TwilioWhatsAppSender::buildFields() directly, in isolation -
+ * confirms the channel-dependent To/From/Body logic added for
+ * Config\WhatsAppMfa::$channel ('whatsapp' vs 'sms') without making any
+ * real network call. send() itself (the cURL call) is NOT covered here
+ * - there is no real Twilio account to call in this test environment,
+ * and buildFields() is where the logic that actually changed lives.
+ */
+final class TwilioWhatsAppSenderTest extends CIUnitTestCase
+{
+    private function makeConfig(): WhatsAppMfaConfig
+    {
+        $config                        = new WhatsAppMfaConfig();
+        $config->twilioSid             = 'ACtest';
+        $config->twilioAuthToken       = 'test-token';
+        $config->plainMessageTemplate  = 'Your code is %s.';
+
+        return $config;
+    }
+
+    public function testWhatsAppChannelPrefixesBothToAndFrom(): void
+    {
+        $config                   = $this->makeConfig();
+        $config->channel          = 'whatsapp';
+        $config->twilioFromNumber = '+14155238886'; // deliberately WITHOUT the prefix already on it
+
+        $fields = (new TestableTwilioWhatsAppSender())->exposeBuildFields('+15551234567', '123456', $config);
+
+        $this->assertSame('whatsapp:+15551234567', $fields['To']);
+        $this->assertSame('whatsapp:+14155238886', $fields['From']);
+    }
+
+    public function testSmsChannelStripsAnyExistingWhatsAppPrefixFromTheSameConfiguredNumber(): void
+    {
+        $config                   = $this->makeConfig();
+        $config->channel          = 'sms';
+        $config->twilioFromNumber = 'whatsapp:+14155238886'; // deliberately WITH the prefix already on it
+
+        $fields = (new TestableTwilioWhatsAppSender())->exposeBuildFields('+15551234567', '123456', $config);
+
+        $this->assertSame('+15551234567', $fields['To']);
+        $this->assertSame('+14155238886', $fields['From']);
+    }
+
+    /**
+     * THE regression test for a real, confirmed requirement: SMS has
+     * no equivalent to WhatsApp's Content Template mechanism, and
+     * Twilio's own SMS API doesn't support ContentSid/ContentVariables
+     * at all - a configured twilioContentSid must never leak into an
+     * SMS-channel request, even if a developer forgot to clear it
+     * after switching channels.
+     */
+    public function testSmsChannelAlwaysUsesPlainBodyEvenIfAContentSidIsConfigured(): void
+    {
+        $config                   = $this->makeConfig();
+        $config->channel          = 'sms';
+        $config->twilioFromNumber = '+14155238886';
+        $config->twilioContentSid = 'HXfakeContentSid';
+
+        $fields = (new TestableTwilioWhatsAppSender())->exposeBuildFields('+15551234567', '123456', $config);
+
+        $this->assertArrayNotHasKey('ContentSid', $fields);
+        $this->assertArrayNotHasKey('ContentVariables', $fields);
+        $this->assertSame('Your code is 123456.', $fields['Body']);
+    }
+
+    public function testWhatsAppChannelUsesContentSidWhenConfigured(): void
+    {
+        $config                   = $this->makeConfig();
+        $config->channel          = 'whatsapp';
+        $config->twilioFromNumber = '+14155238886';
+        $config->twilioContentSid = 'HXfakeContentSid';
+
+        $fields = (new TestableTwilioWhatsAppSender())->exposeBuildFields('+15551234567', '123456', $config);
+
+        $this->assertSame('HXfakeContentSid', $fields['ContentSid']);
+        $this->assertArrayNotHasKey('Body', $fields);
+    }
+
+    public function testDefaultChannelIsWhatsAppForBackwardCompatibility(): void
+    {
+        $config = new WhatsAppMfaConfig();
+
+        $this->assertSame('whatsapp', $config->channel);
+    }
+}

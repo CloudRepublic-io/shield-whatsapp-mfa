@@ -9,13 +9,13 @@
 <?php endif ?>
 
 <p>
-    <?= str_replace('{phone}', esc($phone_masked), lang('WhatsAppMfa.sendIntro')) ?>
+    <?= str_replace('{phone}', esc($phone_masked), \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.sendIntro')) ?>
 </p>
 
 <form method="post" action="<?= url_to('auth-action-handle') ?>">
     <?= csrf_field() ?>
     <button type="submit" class="btn btn-primary">
-        <?= lang('WhatsAppMfa.sendButton') ?>
+        <?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.sendButton') ?>
     </button>
 </form>
 

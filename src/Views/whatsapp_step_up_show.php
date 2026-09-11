@@ -9,7 +9,7 @@
 <?php endif ?>
 
 <p>
-    <?= str_replace('{phone}', esc($phone_masked), lang('WhatsAppMfa.stepUpIntro')) ?>
+    <?= str_replace('{phone}', esc($phone_masked), \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.stepUpIntro')) ?>
 </p>
 
 <form method="post" action="<?= url_to('whatsapp-step-up-send') ?>">

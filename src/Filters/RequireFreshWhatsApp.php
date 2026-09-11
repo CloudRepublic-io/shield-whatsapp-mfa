@@ -7,6 +7,7 @@ namespace WhatsAppMfa\Filters;
 use CodeIgniter\Filters\FilterInterface;
 use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
+use WhatsAppMfa\Libraries\ChannelLabel;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
 
 /**
@@ -59,7 +60,7 @@ class RequireFreshWhatsApp implements FilterInterface
             session()->set('whatsapp_step_up_redirect', (string) current_url(true));
 
             return redirect()->route($config->stepUpEnrollRouteName)
-                ->with('message', lang('WhatsAppMfa.stepUpNeedsEnrollment'));
+                ->with('message', ChannelLabel::inject('WhatsAppMfa.stepUpNeedsEnrollment'));
         }
 
         $verifiedAt = session($config->stepUpSessionKey);

@@ -2,7 +2,7 @@
 
 <?= $this->section('main') ?>
 
-<h1 class="h3 mb-3"><?= lang('WhatsAppMfa.enrollHeading') ?></h1>
+<h1 class="h3 mb-3"><?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.enrollHeading') ?></h1>
 
 <?php if (session('error')) : ?>
     <div class="alert alert-danger"><?= esc(session('error')) ?></div>

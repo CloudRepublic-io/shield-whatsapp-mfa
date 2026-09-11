@@ -2,7 +2,7 @@
 
 <?= $this->section('main') ?>
 
-<h1 class="h3 mb-3"><?= lang('WhatsAppMfa.settingsHeading') ?></h1>
+<h1 class="h3 mb-3"><?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.settingsHeading') ?></h1>
 
 <?php if (session('message')) : ?>
     <div class="alert alert-success"><?= esc(session('message')) ?></div>
@@ -11,12 +11,12 @@
     <div class="alert alert-danger"><?= esc(session('error')) ?></div>
 <?php endif ?>
 
-<p class="text-muted"><?= lang('WhatsAppMfa.settingsIntro') ?></p>
+<p class="text-muted"><?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.settingsIntro') ?></p>
 
 <?php if ($verifiedPhone === null) : ?>
-    <p><?= lang('WhatsAppMfa.noPhoneSet') ?></p>
+    <p><?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.noPhoneSet') ?></p>
     <a href="<?= url_to('whatsapp-settings-enroll') ?>" class="btn btn-primary">
-        <?= lang('WhatsAppMfa.addButton') ?>
+        <?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.addButton') ?>
     </a>
 <?php else : ?>
     <p>
@@ -28,7 +28,7 @@
         <?= lang('WhatsAppMfa.changeButton') ?>
     </a>
 
-    <form method="post" action="<?= url_to('whatsapp-settings-disable') ?>" class="d-inline" onsubmit="return confirm('<?= lang('WhatsAppMfa.removeConfirm') ?>');">
+    <form method="post" action="<?= url_to('whatsapp-settings-disable') ?>" class="d-inline" onsubmit="return confirm('<?= \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.removeConfirm') ?>');">
         <?= csrf_field() ?>
         <button type="submit" class="btn btn-outline-danger">
             <?= lang('WhatsAppMfa.removeButton') ?>

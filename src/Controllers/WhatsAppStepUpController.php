@@ -7,6 +7,7 @@ namespace WhatsAppMfa\Controllers;
 use CodeIgniter\Controller;
 use CodeIgniter\HTTP\RedirectResponse;
 use Config\WhatsAppMfa as WhatsAppMfaConfig;
+use WhatsAppMfa\Libraries\ChannelLabel;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
 use WhatsAppMfa\Sender\WhatsAppSenderInterface;
 
@@ -75,7 +76,7 @@ class WhatsAppStepUpController extends Controller
             // own rather than assuming the filter was definitely what
             // sent the request.
             return redirect()->route($this->config->stepUpEnrollRouteName)
-                ->with('message', lang('WhatsAppMfa.stepUpNeedsEnrollment'));
+                ->with('message', ChannelLabel::inject('WhatsAppMfa.stepUpNeedsEnrollment'));
         }
 
         $phone = $this->store->getVerifiedPhoneNumber($user);

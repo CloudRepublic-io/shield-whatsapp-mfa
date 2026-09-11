@@ -51,10 +51,36 @@ class WhatsAppMfa extends BaseConfig
 
     // -- Twilio -------------------------------------------------------------------
 
+    /**
+     * Which channel TwilioWhatsAppSender actually sends through -
+     * 'whatsapp' (the default, unchanged from before this setting
+     * existed) or 'sms'. An app-wide toggle, not a per-user choice -
+     * every user gets whichever channel is configured here.
+     *
+     * SMS has no equivalent to WhatsApp's own Content Template
+     * requirement for messages sent outside a 24h session window - it
+     * can always send free-form text - so $twilioContentSid below is
+     * simply ignored whenever $channel is 'sms', regardless of whether
+     * it's set.
+     *
+     * Reuses $twilioFromNumber below for BOTH channels - TwilioWhatsAppSender
+     * strips or adds the 'whatsapp:' prefix on that same value as
+     * needed, rather than requiring a second, separate "from" number
+     * configured here. This assumes your Twilio number is capable of
+     * both channels, which is common but not universal - if your
+     * WhatsApp-approved sender and your SMS-capable number are
+     * genuinely different numbers on your Twilio account, don't just
+     * flip this to 'sms' without first confirming $twilioFromNumber
+     * itself is also updated to a number that can actually send SMS.
+     *
+     * @var 'whatsapp'|'sms'
+     */
+    public string $channel = 'whatsapp';
+
     public string $twilioSid         = '';
     public string $twilioAuthToken   = '';
-    public string $twilioFromNumber  = ''; // e.g. "whatsapp:+14155238886"
-    public string $twilioContentSid  = ''; // leave blank to use plainMessageTemplate instead
+    public string $twilioFromNumber  = ''; // e.g. "whatsapp:+14155238886" - the 'whatsapp:' prefix is optional here regardless of $channel; see TwilioWhatsAppSender
+    public string $twilioContentSid  = ''; // leave blank to use plainMessageTemplate instead - ignored entirely when $channel is 'sms'
 
     /**
      * Used by TwilioWhatsAppSender only when twilioContentSid is empty

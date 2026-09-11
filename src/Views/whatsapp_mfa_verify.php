@@ -9,7 +9,7 @@
 <?php endif ?>
 
 <p>
-    <?= str_replace('{phone}', esc($phone_masked), lang('WhatsAppMfa.verifyIntro')) ?>
+    <?= str_replace('{phone}', esc($phone_masked), \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.verifyIntro')) ?>
 </p>
 
 <form method="post" action="<?= url_to('auth-action-verify') ?>">

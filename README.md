@@ -33,11 +33,12 @@ src/
   Filters/RequireFreshWhatsApp.php        <- step-up auth filter for sensitive routes
   Sender/WhatsAppSenderInterface.php      <- contract for delivery providers
   Sender/MetaCloudApiSender.php           <- Meta WhatsApp Cloud API (default)
-  Sender/TwilioWhatsAppSender.php         <- Twilio WhatsApp alternative
+  Sender/TwilioWhatsAppSender.php         <- Twilio alternative - WhatsApp or SMS, via $channel
   Language/en/WhatsAppMfa.php
   Libraries/
     PhoneNumberStore.php                  <- shared verified-phone storage/verification/step-up logic
     CompletesPendingAction.php            <- shared "finish this pending action" trait
+    ChannelLabel.php                      <- resolves {channel} placeholders to "WhatsApp"/"SMS"
   Views/
     whatsapp_mfa_show.php                 <- "we're about to send you a code" (login)
     whatsapp_mfa_verify.php               <- "enter your code" + resend (login)
@@ -297,6 +298,52 @@ To use a different provider entirely (360dialog, Vonage, an in-house
 gateway), implement `WhatsAppSenderInterface` (one method: `send()`) and
 point `$sender` at your class. The Action itself never talks to any
 provider API directly.
+
+## Sending via SMS instead of WhatsApp (Twilio only)
+
+`TwilioWhatsAppSender` can deliver the code via plain SMS instead of
+WhatsApp - useful if your users don't reliably have WhatsApp, or you'd
+rather not depend on it. Set:
+
+```php
+public string $channel = 'sms'; // default is 'whatsapp'
+```
+
+This is an **app-wide toggle, not a per-user choice** - every user gets
+whichever channel is configured. If you need different users on
+different channels, this package doesn't support that today; you'd need
+your own sender implementing the branching yourself.
+
+**The same `$twilioFromNumber` is used for both channels** - this class
+strips or adds the `whatsapp:` prefix on that configured value as
+needed, rather than requiring a second number configured specifically
+for SMS. This assumes your Twilio number is capable of both channels,
+which is common (many Twilio numbers are both WhatsApp-enabled and
+SMS-capable) but not universal - if your WhatsApp-approved sender and
+your SMS-capable number are genuinely two different numbers on your
+Twilio account, update `$twilioFromNumber` itself to the SMS-capable
+one before switching `$channel` to `'sms'`, since this class has no way
+to know about a second number it was never given.
+
+**`$twilioContentSid` (WhatsApp's Content Template requirement) is
+ignored entirely when `$channel` is `'sms'`**, regardless of whether
+it's set - SMS has no equivalent restriction on free-form text outside
+a session window, and Twilio's own SMS API doesn't support
+`ContentSid`/`ContentVariables` at all.
+
+**Every user-facing string that says "WhatsApp" is channel-aware
+automatically** - `sendIntro`, `sendButton`, `settingsHeading`,
+`phoneLabel`, and others all use a `{channel}` placeholder rather than
+hardcoding "WhatsApp", substituted at render time by
+`WhatsAppMfa\Libraries\ChannelLabel` (a plain, autoloaded class -
+deliberately not a global helper function requiring an explicit
+`helper()` call, since this package has already hit two real bugs from
+exactly that pattern - see "If you get 'Call to undefined function...'"
+below). Switch `$channel` to `'sms'` and every page correctly says
+"SMS" instead, without editing the language file yourself - though you
+can still override `channelLabel_sms`/`channelLabel_whatsapp` in your
+own app's language file if you'd prefer different wording (e.g. "text
+message" instead of "SMS").
 
 ## Security notes
 
@@ -583,22 +630,31 @@ generation and sending via a fake sender, so no real network call ever
 happens, plus correct/wrong/empty/expired code handling),
 `WhatsAppActivator` (the registration-time counterpart - phone entry,
 send, verify, skip), `PhoneNumberStore`, the self-service settings
-controller, and the step-up auth filter/controller.
+controller, the step-up auth filter/controller, `TwilioWhatsAppSender`'s
+own channel-switching field-building logic (`$channel` = `'whatsapp'`
+vs `'sms'` - see "Sending via SMS instead of WhatsApp" above), and
+`ChannelLabel` (the `{channel}` placeholder substitution that feature
+relies on).
 
 ```
 tests/WhatsAppMfa/
   Support/FakeWhatsAppSender.php    <- records what would have been sent, no real network call
   Support/TestableWhatsAppMfa.php   <- fixes the phone number for testing, since Shield's
                                         stock User entity has no phone column
+  Support/TestableTwilioWhatsAppSender.php <- exposes TwilioWhatsAppSender's protected
+                                                buildFields() for direct testing, no HTTP call needed
   Authentication/Actions/WhatsAppMfaTest.php
   Authentication/Actions/WhatsAppActivatorTest.php <- registration-time counterpart, including
                                                         the $wasAlreadyActive / forced-setup-reuse fix
   Libraries/PhoneNumberStoreTest.php       <- pending-to-permanent record lifecycle, step-up challenges,
                                                and regression tests for the fixed duplicate-key bugs
+  Libraries/ChannelLabelTest.php           <- {channel} placeholder resolution/substitution
   Controllers/WhatsAppSettingsControllerTest.php <- enroll/send/verify/confirm/disable
   Filters/RequireFreshWhatsAppTest.php     <- step-up freshness/enrollment logic
   Controllers/WhatsAppStepUpControllerTest.php <- step-up show/send/verify, including a
                                                     regression test for the back()-vs-route() fix
+  Sender/TwilioWhatsAppSenderTest.php      <- WhatsApp vs SMS field-building (To/From prefixing,
+                                                Content Template ignored entirely for SMS)
 ```
 
 ### Setup
