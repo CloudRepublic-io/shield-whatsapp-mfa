@@ -345,6 +345,27 @@ can still override `channelLabel_sms`/`channelLabel_whatsapp` in your
 own app's language file if you'd prefer different wording (e.g. "text
 message" instead of "SMS").
 
+**If you're using `shield-mfa-dispatcher`, its own settings page
+(`account/mfa`) needs one extra line to stay in sync.** That page has
+no idea this package - or WhatsApp, or SMS - exists; it only shows a
+static label per method by default, which would leave it saying
+"WhatsApp code" regardless of your `$channel` setting. Wire this
+package's own `ChannelLabel` into its `$methodLabelResolvers` config
+property to fix that:
+
+```php
+// app/Config/MfaDispatcher.php
+public array $methodLabelResolvers = [
+    'whatsapp' => [\WhatsAppMfa\Libraries\ChannelLabel::class, 'current'],
+];
+```
+
+See `shield-mfa-dispatcher`'s own README ("A method's own label can
+reflect something that changes at runtime") for why this is a config
+entry you add yourself, rather than something wired in automatically -
+that package stays deliberately ignorant of what any given method
+actually is.
+
 ## Security notes
 
 - Codes are hashed with `password_hash()` before storage — never stored
