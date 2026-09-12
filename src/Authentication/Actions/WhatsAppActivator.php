@@ -144,7 +144,28 @@ class WhatsAppActivator implements ActionInterface, ConditionalActionInterface
         $senderClass = $this->config->sender;
         /** @var WhatsAppSenderInterface $sender */
         $sender = new $senderClass();
-        $sender->send($phone, $code, $this->config);
+
+        // CONFIRMED, REAL BUG FIXED HERE: a real report traced an
+        // orphaned ID_TYPE_PHONE_PENDING record back to exactly this
+        // gap - beginVerification() above already creates that record
+        // before send() is even attempted, and send() throwing (a real
+        // Twilio API error, in the reported case) was previously
+        // completely uncaught, crashing the whole request and leaving
+        // that record behind indefinitely - nothing ever ran to clean
+        // it up, since confirmVerification() (the only code that
+        // deletes it) never got a chance to run at all. \Throwable
+        // (not RuntimeException, which this file's own import above
+        // aliases to Shield's OWN exception class, not the plain one
+        // WhatsAppSenderInterface implementations actually throw) is
+        // used specifically so this doesn't depend on which exception
+        // class a given sender implementation happens to use.
+        try {
+            $sender->send($phone, $code, $this->config);
+        } catch (\Throwable $e) {
+            $this->store->cancelVerification($user);
+
+            return redirect()->back()->withInput()->with('error', \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.sendFailedMessage'));
+        }
 
         $body = view($this->config->views['whatsapp_activator_verify'], [
             'phone_masked' => $this->maskPhone($phone),

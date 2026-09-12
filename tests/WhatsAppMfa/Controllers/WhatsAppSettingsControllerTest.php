@@ -129,6 +129,25 @@ final class WhatsAppSettingsControllerTest extends CIUnitTestCase
         $this->assertNotNull(FakeWhatsAppSender::$lastCode);
     }
 
+    /**
+     * THE regression test for a real, confirmed report - see
+     * WhatsAppActivator's own identical fix (in this same package) for
+     * the fuller account.
+     */
+    public function testSendRollsBackThePendingRecordWhenTheSenderFails(): void
+    {
+        $user = $this->makeUser();
+        $this->actingAs($user);
+
+        FakeWhatsAppSender::$shouldFail = true;
+
+        $this->makeController(['phone' => '+15551234567'])->send();
+
+        $store = new PhoneNumberStore();
+        $this->assertNull($store->getPendingPhoneNumber($user));
+        $this->assertNotEmpty(session('error'));
+    }
+
     public function testVerifyRedirectsToEnrollWithNoPendingAttempt(): void
     {
         $user = $this->makeUser();

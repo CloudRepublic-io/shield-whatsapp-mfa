@@ -107,6 +107,29 @@ final class WhatsAppStepUpControllerTest extends CIUnitTestCase
         $this->assertSame('+15551234567', FakeWhatsAppSender::$lastPhoneNumber);
     }
 
+    /**
+     * THE regression test for a real, confirmed report - see
+     * WhatsAppActivator's own identical fix (in this same package) for
+     * the fuller account. cancelStepUp() (PhoneNumberStore) was added
+     * specifically to support this rollback.
+     */
+    public function testSendRollsBackTheStepUpChallengeWhenTheSenderFails(): void
+    {
+        $user = $this->makeUser();
+        $this->actingAs($user);
+        $this->verifyPhone($user);
+
+        FakeWhatsAppSender::$shouldFail = true;
+
+        $this->makeController()->send();
+
+        $this->dontSeeInDatabase('auth_identities', [
+            'user_id' => $user->id,
+            'type'    => PhoneNumberStore::ID_TYPE_PHONE_STEP_UP,
+        ]);
+        $this->assertNotEmpty(session('error'));
+    }
+
     public function testVerifyWithCorrectCodeStampsTheStepUpSession(): void
     {
         $user = $this->makeUser();

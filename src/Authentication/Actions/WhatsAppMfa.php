@@ -13,6 +13,7 @@ use CodeIgniter\Shield\Entities\User;
 use CodeIgniter\Shield\Exceptions\RuntimeException;
 use CodeIgniter\Shield\Models\UserIdentityModel;
 use Config\WhatsAppMfa as WhatsAppMfaConfig;
+use WhatsAppMfa\Libraries\ChannelLabel;
 use WhatsAppMfa\Libraries\CompletesPendingAction;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
 
@@ -116,7 +117,26 @@ class WhatsAppMfa implements ActionInterface
         $senderClass = $this->config->sender;
         /** @var \WhatsAppMfa\Sender\WhatsAppSenderInterface $sender */
         $sender = new $senderClass();
-        $sender->send($phone, $code, $this->config);
+
+        // CONFIRMED, REAL BUG FIXED HERE - see WhatsAppActivator's own
+        // identical fix for the fuller account of a real report this
+        // addresses: send() throwing (uncaught here previously) both
+        // crashed the request and left the just-created
+        // ID_TYPE_WHATSAPP_MFA identity orphaned, since nothing ran to
+        // clean it up. \Throwable (not RuntimeException, which this
+        // file's own import above aliases to Shield's OWN exception
+        // class) is used so this doesn't depend on which exception
+        // class a given sender implementation happens to use.
+        try {
+            $sender->send($phone, $code, $this->config);
+        } catch (\Throwable $e) {
+            $this->identities
+                ->where('user_id', $user->id)
+                ->where('type', self::ID_TYPE_WHATSAPP_MFA)
+                ->delete();
+
+            return redirect()->route('login')->with('error', ChannelLabel::inject('WhatsAppMfa.sendFailedMessage'));
+        }
 
         $body = view($this->config->views['whatsapp_mfa_verify'], [
             'phone_masked'   => $this->maskPhone($phone),

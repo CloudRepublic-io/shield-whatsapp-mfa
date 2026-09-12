@@ -220,7 +220,7 @@ account's own, entirely unrelated verification failed with a
 duplicate-key database error. This is Shield's own base schema, not
 something this package should (or safely could) alter - the exact same
 bug, and the exact same fix, found and applied to
-`shield-mfa-dispatcher`'s `MfaPreference` (see that [package's]('https://github.com/CloudRepublic-io/shield-mfa-dispatcher') README
+`shield-mfa-dispatcher`'s `MfaPreference` (see that package's README
 for the fuller account of the same underlying pattern).
 
 `PhoneNumberStore` now stores the verified number through
@@ -394,6 +394,60 @@ the user already has a verified number. Genuine test coverage here -
 `PhoneNumberStore::beginVerification()`'s own returned code directly,
 no message actually needing to be "sent") and confirms `appliesTo()`
 correctly returns `false` afterward.
+
+## A sender failure left an orphaned pending record behind - fixed
+
+**Fixed in the current version.** A real report: a Twilio API error
+mid-send crashed the whole request, and the pending verification
+record `beginVerification()` had already created was left behind
+indefinitely - still present even after the user later completed
+verification successfully through a *separate* attempt.
+
+**Root cause, confirmed directly in the code:** every place this
+package calls a configured sender -
+`WhatsAppActivator::handle()` (registration), `WhatsAppMfa::handle()`
+(login), `WhatsAppSettingsController::send()` (self-service), and
+`WhatsAppStepUpController::send()` (step-up) - created its own
+pending/temporary record *first*, then called `$sender->send(...)`
+with no `try`/`catch` at all. A thrown exception (a real Twilio error,
+in the reported case, but this applies to any sender failure -
+network issues, provider outages, a misconfigured API key) propagated
+straight through, uncaught, crashing the request. The pending record
+was left orphaned, since `confirmVerification()` (the only code that
+would otherwise delete it) never got a chance to run - the user never
+even received a code to enter.
+
+This explains a related, confusing symptom some installs may have
+hit: a fully-verified user who still has an old `whatsapp_phone_pending`
+and/or `whatsapp_phone_activate` row left over in `auth_identities`,
+from an earlier crashed attempt that was never cleaned up, sitting
+alongside their (unaffected, working) verified number. Both temporary
+row types are otherwise correctly deleted on every successful
+verification (see "Why the verified phone number is stored via
+Settings, not a Shield identity" above) - this gap was specifically
+about the crash path, not the success path.
+
+**Fixed:** all four call sites now wrap the sender call in
+`try { ... } catch (\Throwable $e) { ... }`, rolling back whatever was
+just created (`PhoneNumberStore::cancelVerification()`/the new
+`cancelStepUp()`/the login-time identity directly) and showing
+`WhatsAppMfa.sendFailedMessage` instead of crashing. `\Throwable` is
+used deliberately, not `RuntimeException` - several of these files
+already import `CodeIgniter\Shield\Exceptions\RuntimeException` under
+that exact name for other purposes, which would silently fail to catch
+the plain, global `RuntimeException` a sender actually throws.
+`Tests\WhatsAppMfa\Support\FakeWhatsAppSender` gained a `$shouldFail`
+toggle specifically to test this without needing a real provider
+failure, and each of the four call sites has its own regression test
+confirming the rollback.
+
+**Not fixed by this change - a real, separate cleanup step:** any
+orphaned rows already sitting in an existing installation's database
+from before this fix won't disappear on their own. If you're affected,
+find and delete the stale `whatsapp_phone_pending`/`whatsapp_phone_activate`
+rows for the affected `user_id` directly - they're inert once
+orphaned (the permanent verified number lives via Settings, untouched
+by any of this), but harmless clutter is still clutter.
 
 ## If the page loads but shows nothing at all
 
@@ -608,7 +662,7 @@ rather than needing it discovered here separately.
 
 ## Tests
 
-**If you're using `shield-mfa-dispatcher` [package]('https://github.com/CloudRepublic-io/shield-mfa-dispatcher')** (or anything else that
+**If you're using `shield-mfa-dispatcher`** (or anything else that
 makes `Config\Auth::$actions` point at something other than
 `WhatsAppMfa`/`WhatsAppActivator` directly): the confirmed fixes
 `shield-totp-mfa` needed for this exact same architecture (session
@@ -638,7 +692,9 @@ relies on).
 
 ```
 tests/WhatsAppMfa/
-  Support/FakeWhatsAppSender.php    <- records what would have been sent, no real network call
+  Support/FakeWhatsAppSender.php    <- records what would have been sent, no real network call -
+                                        $shouldFail simulates a real provider failure, for testing
+                                        the sender-failure rollback fix (see that section above)
   Support/TestableWhatsAppMfa.php   <- fixes the phone number for testing, since Shield's
                                         stock User entity has no phone column
   Support/TestableTwilioWhatsAppSender.php <- exposes TwilioWhatsAppSender's protected

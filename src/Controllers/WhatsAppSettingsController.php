@@ -65,7 +65,17 @@ class WhatsAppSettingsController extends Controller
         $senderClass = $this->config->sender;
         /** @var WhatsAppSenderInterface $sender */
         $sender = new $senderClass();
-        $sender->send($phone, $code, $this->config);
+
+        // CONFIRMED, REAL BUG FIXED HERE - see WhatsAppActivator's own
+        // identical fix for the fuller account of a real report this
+        // addresses.
+        try {
+            $sender->send($phone, $code, $this->config);
+        } catch (\Throwable $e) {
+            $this->store->cancelVerification($user);
+
+            return redirect()->back()->withInput()->with('error', ChannelLabel::inject('WhatsAppMfa.sendFailedMessage'));
+        }
 
         return redirect()->route('whatsapp-settings-verify');
     }

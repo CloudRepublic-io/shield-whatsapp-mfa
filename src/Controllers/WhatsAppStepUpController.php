@@ -87,7 +87,18 @@ class WhatsAppStepUpController extends Controller
         $senderClass = $this->config->sender;
         /** @var WhatsAppSenderInterface $sender */
         $sender = new $senderClass();
-        $sender->send($phone, $code, $this->config);
+
+        // CONFIRMED, REAL BUG FIXED HERE - see WhatsAppActivator's own
+        // identical fix for the fuller account of a real report this
+        // addresses. cancelStepUp() (PhoneNumberStore) was added
+        // specifically to support this rollback.
+        try {
+            $sender->send($phone, $code, $this->config);
+        } catch (\Throwable $e) {
+            $this->store->cancelStepUp($user);
+
+            return redirect()->back()->with('error', ChannelLabel::inject('WhatsAppMfa.sendFailedMessage'));
+        }
 
         return view($this->config->views['whatsapp_step_up_verify'], [
             'phone_masked' => $this->maskPhone($phone),

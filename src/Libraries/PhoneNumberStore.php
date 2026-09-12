@@ -262,6 +262,22 @@ class PhoneNumberStore
             ->delete();
     }
 
+    /**
+     * Rolls back a step-up challenge that was created but never actually
+     * delivered - added specifically so a sender failure mid-send
+     * (WhatsAppStepUpController now catches this) doesn't leave an
+     * orphaned ID_TYPE_PHONE_STEP_UP row behind that the user has no way
+     * to ever satisfy, since the code inside it was never actually sent
+     * to them.
+     */
+    public function cancelStepUp(User $user): void
+    {
+        $this->identities
+            ->where('user_id', $user->id)
+            ->where('type', self::ID_TYPE_PHONE_STEP_UP)
+            ->delete();
+    }
+
     public function removeVerifiedPhoneNumber(User $user): void
     {
         service('settings')->forget(self::SETTING_KEY, $this->contextFor($user));

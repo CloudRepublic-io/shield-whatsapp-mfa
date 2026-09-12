@@ -239,6 +239,30 @@ final class WhatsAppActivatorTest extends CIUnitTestCase
         $this->assertSame('+15551234567', FakeWhatsAppSender::$lastPhoneNumber);
     }
 
+    /**
+     * THE regression test for a real, confirmed report: a sender
+     * failure (a real Twilio API error, in the reported case) crashed
+     * the whole request uncaught, leaving the pending record
+     * beginVerification() had already created orphaned indefinitely -
+     * confirmVerification() (the only code that would otherwise delete
+     * it) never got a chance to run at all, since the code was never
+     * actually delivered for the user to enter.
+     */
+    public function testHandleRollsBackThePendingRecordWhenTheSenderFails(): void
+    {
+        $user = $this->makeUser();
+        $this->attemptLogin($user);
+        $this->simulateRegistrationStartup($user);
+
+        FakeWhatsAppSender::$shouldFail = true;
+
+        (new WhatsAppActivator())->handle($this->requestWithPost(['phone' => '+15551234567']));
+
+        $store = new PhoneNumberStore();
+        $this->assertNull($store->getPendingPhoneNumber($user));
+        $this->assertNotEmpty(session('error'));
+    }
+
     public function testCorrectCodeActivatesUserAndVerifiesThePhone(): void
     {
         $user = $this->makeUser();

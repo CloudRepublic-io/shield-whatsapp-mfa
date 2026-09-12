@@ -158,6 +158,29 @@ final class WhatsAppMfaTest extends CIUnitTestCase
         ]);
     }
 
+    /**
+     * THE regression test for a real, confirmed report - see
+     * WhatsAppActivator's own identical fix (in this same package) for
+     * the fuller account: a sender failure previously crashed the
+     * whole request uncaught, leaving the just-created
+     * ID_TYPE_WHATSAPP_MFA identity orphaned indefinitely.
+     */
+    public function testHandleRollsBackTheIdentityWhenTheSenderFails(): void
+    {
+        $user = $this->makeUser();
+        $this->attemptLogin($user);
+
+        FakeWhatsAppSender::$shouldFail = true;
+
+        (new TestableWhatsAppMfa())->handle($this->requestWithPost([]));
+
+        $this->dontSeeInDatabase('auth_identities', [
+            'user_id' => $user->id,
+            'type'    => WhatsAppMfa::ID_TYPE_WHATSAPP_MFA,
+        ]);
+        $this->assertNotEmpty(session('error'));
+    }
+
     public function testCorrectCodeCompletesLogin(): void
     {
         $user = $this->makeUser();

@@ -38,6 +38,7 @@ return [
     'phonePlaceholder'     => 'e.g. +14155551234',
     'sendCodeButton'       => 'Send code',
     'invalidPhoneNumber'   => 'Please enter a valid phone number.',
+    'sendFailedMessage'    => 'We couldn\'t send your code via {channel} right now. Please try again in a moment.',
     'confirmVerifyIntro'   => 'Enter the 6-digit code we sent to the number ending in {phone}.',
     'phoneVerifiedMessage' => '{channel} number verified.',
     'phoneRemovedMessage'  => '{channel} number removed.',
