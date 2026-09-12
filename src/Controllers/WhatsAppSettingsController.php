@@ -8,6 +8,7 @@ use CodeIgniter\Controller;
 use CodeIgniter\HTTP\RedirectResponse;
 use Config\WhatsAppMfa as WhatsAppMfaConfig;
 use WhatsAppMfa\Libraries\ChannelLabel;
+use WhatsAppMfa\Libraries\DiagnosticLog;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
 use WhatsAppMfa\Sender\TwilioWhatsAppSender;
 use WhatsAppMfa\Sender\WhatsAppSenderInterface;
@@ -101,7 +102,9 @@ class WhatsAppSettingsController extends Controller
         } catch (\Throwable $e) {
             $this->store->cancelVerification($user);
 
-            return redirect()->back()->withInput()->with('error', ChannelLabel::inject('WhatsAppMfa.sendFailedMessage'));
+            DiagnosticLog::write('error', 'WhatsAppSettingsController send(): sender threw for user_id {user_id}: {reason}', ['user_id' => $user->id, 'reason' => $e->getMessage()]);
+
+            return redirect()->back()->withInput()->with('error', $this->sendFailedMessage(ChannelLabel::inject('WhatsAppMfa.sendFailedMessage'), $e));
         }
 
         return redirect()->route('whatsapp-settings-verify');
@@ -201,7 +204,9 @@ class WhatsAppSettingsController extends Controller
         } catch (\Throwable $e) {
             $this->store->cancelWhatsAppTest($user);
 
-            return redirect()->back()->withInput()->with('error', lang('WhatsAppMfa.testSendFailedMessage'));
+            DiagnosticLog::write('error', 'WhatsAppSettingsController testSend(): sender threw for user_id {user_id}: {reason}', ['user_id' => $user->id, 'reason' => $e->getMessage()]);
+
+            return redirect()->back()->withInput()->with('error', $this->sendFailedMessage(lang('WhatsAppMfa.testSendFailedMessage'), $e));
         }
 
         return redirect()->route('whatsapp-settings-test-verify');
@@ -240,6 +245,25 @@ class WhatsAppSettingsController extends Controller
         }
 
         return redirect()->route('whatsapp-settings')->with('message', lang('WhatsAppMfa.testConfirmedMessage'));
+    }
+
+    /**
+     * The plain failure message, with a `[diagnostic: ...]` suffix
+     * appended only when ENVIRONMENT is 'development' - same pattern
+     * shield-passkey-mfa's PasskeyMfa::verify() already uses for the
+     * identical reason: showing the real exception message directly in
+     * the page is the fastest way to see what actually went wrong
+     * while developing/testing, without needing to check a log file at
+     * all - but not something that should ever be shown to a real user
+     * in production.
+     */
+    private function sendFailedMessage(string $baseMessage, \Throwable $e): string
+    {
+        if (ENVIRONMENT === 'development') {
+            $baseMessage .= ' [diagnostic: ' . $e->getMessage() . ']';
+        }
+
+        return $baseMessage;
     }
 
     /**

@@ -8,6 +8,7 @@ use CodeIgniter\Controller;
 use CodeIgniter\HTTP\RedirectResponse;
 use Config\WhatsAppMfa as WhatsAppMfaConfig;
 use WhatsAppMfa\Libraries\ChannelLabel;
+use WhatsAppMfa\Libraries\DiagnosticLog;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
 use WhatsAppMfa\Sender\WhatsAppSenderInterface;
 
@@ -97,7 +98,15 @@ class WhatsAppStepUpController extends Controller
         } catch (\Throwable $e) {
             $this->store->cancelStepUp($user);
 
-            return redirect()->back()->with('error', ChannelLabel::inject('WhatsAppMfa.sendFailedMessage'));
+            DiagnosticLog::write('error', 'WhatsAppStepUpController send(): sender threw for user_id {user_id}: {reason}', ['user_id' => $user->id, 'reason' => $e->getMessage()]);
+
+            $message = ChannelLabel::inject('WhatsAppMfa.sendFailedMessage');
+
+            if (ENVIRONMENT === 'development') {
+                $message .= ' [diagnostic: ' . $e->getMessage() . ']';
+            }
+
+            return redirect()->back()->with('error', $message);
         }
 
         return view($this->config->views['whatsapp_step_up_verify'], [

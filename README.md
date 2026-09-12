@@ -588,6 +588,43 @@ rows for the affected `user_id` directly - they're inert once
 orphaned (the permanent verified number lives via Settings, untouched
 by any of this), but harmless clutter is still clutter.
 
+### A generic failure message gave no way to tell why - fixed
+
+**Fixed in the current version, following a real report.** Every one
+of the five sender-failure catch blocks above (the four listed there,
+plus `WhatsAppSettingsController::testSend()` - the WhatsApp
+channel-test flow's own send call) previously caught the real
+exception and discarded it entirely, showing only a generic "please
+try again" message. A real report confirmed this made it genuinely
+impossible to tell *why* a send was failing - an invalid or unapproved
+WhatsApp sender number, a missing Content Template (a real, common
+cause the first time you test - see "Sending via SMS instead of
+WhatsApp" above for why WhatsApp specifically requires one outside a
+24h session window), a recipient who hasn't joined your Twilio
+sandbox, bad credentials - without adding temporary debugging code to
+find out.
+
+**Fixed:** a new `WhatsAppMfa\Libraries\DiagnosticLog` class, matching
+the identical one already used by `shield-passkey-mfa` and
+`shield-mfa-dispatcher` in this same series - gated to only ever write
+when `ENVIRONMENT` is `'development'`, so production logs aren't
+polluted by this. All five catch blocks now log the actual exception
+message via this class. The flash message shown to the user also gets
+a `[diagnostic: ...]` suffix, but *only* in a development environment -
+the same pattern `shield-passkey-mfa`'s own `PasskeyMfa::verify()`
+already uses, for the same reason: seeing the real failure reason
+directly on the page is the fastest way to diagnose a problem while
+you're actively testing, without needing to go check a log file at
+all - but genuinely internal detail like this is never something a
+real user in production should see.
+
+If you're seeing the generic "we couldn't send a test WhatsApp
+message" message yourself while testing, set `CI_ENVIRONMENT=development`
+(or check your app's log with `ENVIRONMENT` already set to
+`'development'`) and try again - the actual reason will now be visible
+either directly on the page or in your log, rather than hidden
+entirely.
+
 ## If the page loads but shows nothing at all
 
 The views in this package wrap their content in a section named

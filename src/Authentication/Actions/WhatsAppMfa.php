@@ -15,6 +15,7 @@ use CodeIgniter\Shield\Models\UserIdentityModel;
 use Config\WhatsAppMfa as WhatsAppMfaConfig;
 use WhatsAppMfa\Libraries\ChannelLabel;
 use WhatsAppMfa\Libraries\CompletesPendingAction;
+use WhatsAppMfa\Libraries\DiagnosticLog;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
 
 /**
@@ -135,7 +136,15 @@ class WhatsAppMfa implements ActionInterface
                 ->where('type', self::ID_TYPE_WHATSAPP_MFA)
                 ->delete();
 
-            return redirect()->route('login')->with('error', ChannelLabel::inject('WhatsAppMfa.sendFailedMessage'));
+            DiagnosticLog::write('error', 'WhatsAppMfa handle(): sender threw for user_id {user_id}: {reason}', ['user_id' => $user->id, 'reason' => $e->getMessage()]);
+
+            $message = ChannelLabel::inject('WhatsAppMfa.sendFailedMessage');
+
+            if (ENVIRONMENT === 'development') {
+                $message .= ' [diagnostic: ' . $e->getMessage() . ']';
+            }
+
+            return redirect()->route('login')->with('error', $message);
         }
 
         $body = view($this->config->views['whatsapp_mfa_verify'], [

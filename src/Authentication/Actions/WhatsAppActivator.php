@@ -164,7 +164,15 @@ class WhatsAppActivator implements ActionInterface, ConditionalActionInterface
         } catch (\Throwable $e) {
             $this->store->cancelVerification($user);
 
-            return redirect()->back()->withInput()->with('error', \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.sendFailedMessage'));
+            \WhatsAppMfa\Libraries\DiagnosticLog::write('error', 'WhatsAppActivator handle(): sender threw for user_id {user_id}: {reason}', ['user_id' => $user->id, 'reason' => $e->getMessage()]);
+
+            $message = \WhatsAppMfa\Libraries\ChannelLabel::inject('WhatsAppMfa.sendFailedMessage');
+
+            if (ENVIRONMENT === 'development') {
+                $message .= ' [diagnostic: ' . $e->getMessage() . ']';
+            }
+
+            return redirect()->back()->withInput()->with('error', $message);
         }
 
         $body = view($this->config->views['whatsapp_activator_verify'], [

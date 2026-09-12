@@ -6,7 +6,7 @@ namespace Config;
 
 use CodeIgniter\Config\BaseConfig;
 use WhatsAppMfa\Sender\MetaCloudApiSender;
-use WhatsAppMfa\Sender\WhatsAppSenderInterface;
+use WhatsAppMfa\Sender\TwilioWhatsAppSender;
 
 /**
  * Copy this file to app/Config/WhatsAppMfa.php in the host application
@@ -140,6 +140,8 @@ class WhatsAppMfa extends BaseConfig
         'whatsapp_activator_verify' => 'WhatsAppMfa\Views\whatsapp_activator_verify',
         'whatsapp_step_up_show'     => 'WhatsAppMfa\Views\whatsapp_step_up_show',
         'whatsapp_step_up_verify'   => 'WhatsAppMfa\Views\whatsapp_step_up_verify',
+        'whatsapp_settings_test_enroll' => 'WhatsAppMfa\Views\whatsapp_settings_test_enroll',
+        'whatsapp_settings_test_verify' => 'WhatsAppMfa\Views\whatsapp_settings_test_verify',
     ];
 
     public function __construct()

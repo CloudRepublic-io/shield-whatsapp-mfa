@@ -317,4 +317,30 @@ final class WhatsAppSettingsControllerTest extends CIUnitTestCase
 
         $this->assertFalse($store->hasConfirmedWhatsAppDelivery($user));
     }
+
+    /**
+     * THE regression test for a real, confirmed gap: a sender failure
+     * previously showed only a generic message with no way to tell
+     * what actually went wrong (an invalid sender number, a missing
+     * Content Template, an un-joined WhatsApp sandbox recipient, etc.)
+     * without adding temporary debugging code first. Confirms the base,
+     * safe behavior specifically - this test's own environment is
+     * 'testing', not 'development' (PHP's ENVIRONMENT constant can't be
+     * changed at runtime to test the development-only branch directly
+     * in this same process), so this confirms no diagnostic detail
+     * leaks into the message shown outside a development environment,
+     * which is the part that actually matters for production safety.
+     */
+    public function testTestSendFailureMessageDoesNotLeakDiagnosticDetailOutsideDevelopment(): void
+    {
+        $user = $this->makeUser();
+        $this->actingAs($user);
+        $this->makeTestFlowRelevant();
+        FakeTwilioWhatsAppSender::$shouldFail = true;
+
+        $this->makeController(['phone' => '+15551234567'])->testSend();
+
+        $this->assertSame(lang('WhatsAppMfa.testSendFailedMessage'), session('error'));
+        $this->assertStringNotContainsString('[diagnostic:', (string) session('error'));
+    }
 }
