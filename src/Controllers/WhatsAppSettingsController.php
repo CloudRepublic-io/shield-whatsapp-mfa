@@ -9,6 +9,7 @@ use CodeIgniter\HTTP\RedirectResponse;
 use Config\WhatsAppMfa as WhatsAppMfaConfig;
 use WhatsAppMfa\Libraries\ChannelLabel;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
+use WhatsAppMfa\Sender\TwilioWhatsAppSender;
 use WhatsAppMfa\Sender\WhatsAppSenderInterface;
 
 /**
@@ -25,6 +26,14 @@ use WhatsAppMfa\Sender\WhatsAppSenderInterface;
  * this is entirely about PhoneNumberStore's own verified-phone record,
  * a separate concern from the per-login OTP code. See
  * PhoneNumberStore's class doc comment for the full explanation.
+ *
+ * ALSO includes a separate "test WhatsApp delivery" flow
+ * (testEnroll()/testSend()/testVerify()/testConfirm()) - a
+ * developer-facing migration tool, not a normal end-user MFA concept,
+ * so deliberately kept out of shield-mfa-dispatcher's own unified
+ * settings page entirely (see PhoneNumberStore's own doc comment,
+ * "Testing WhatsApp delivery ahead of a $channel migration", for the
+ * full account of why this exists).
  */
 class WhatsAppSettingsController extends Controller
 {
@@ -42,8 +51,26 @@ class WhatsAppSettingsController extends Controller
         $user = auth()->user();
 
         return view($this->config->views['whatsapp_settings_index'], [
-            'verifiedPhone' => $this->store->getVerifiedPhoneNumber($user),
+            'verifiedPhone'       => $this->store->getVerifiedPhoneNumber($user),
+            'testIsRelevant'      => $this->whatsAppTestIsRelevant(),
+            'whatsAppConfirmed'   => $this->store->hasConfirmedWhatsAppDelivery($user),
         ]);
+    }
+
+    /**
+     * The "test WhatsApp delivery" action is only meaningful when
+     * $channel is currently 'sms' (if it's already 'whatsapp', the
+     * NORMAL verify flow already tests WhatsApp directly - a separate
+     * test action would be redundant) AND the configured sender is
+     * specifically TwilioWhatsAppSender (the only sender with a
+     * $channel concept at all - MetaCloudApiSender, for example, only
+     * ever sends WhatsApp, so there's nothing to "test" separately
+     * there either).
+     */
+    private function whatsAppTestIsRelevant(): bool
+    {
+        return $this->config->channel === 'sms'
+            && is_a($this->config->sender, TwilioWhatsAppSender::class, true);
     }
 
     public function enroll(): string
@@ -113,6 +140,106 @@ class WhatsAppSettingsController extends Controller
         $this->store->removeVerifiedPhoneNumber($user);
 
         return redirect()->route('whatsapp-settings')->with('message', ChannelLabel::inject('WhatsAppMfa.phoneRemovedMessage'));
+    }
+
+    // -------------------------------------------------------------------
+    // Testing WhatsApp delivery ahead of a $channel migration - see this
+    // class's own doc comment, and PhoneNumberStore's, for the full
+    // account of why this exists. Deliberately mirrors the
+    // enroll()/send()/verify()/confirm() shape above rather than
+    // threading a "test mode" flag through those already-working
+    // methods - safer than risking a regression in the normal flow to
+    // support this one.
+    // -------------------------------------------------------------------
+
+    public function testEnroll(): string|RedirectResponse
+    {
+        if (! $this->whatsAppTestIsRelevant()) {
+            return redirect()->route('whatsapp-settings');
+        }
+
+        $user = auth()->user();
+
+        return view($this->config->views['whatsapp_settings_test_enroll'], [
+            'verifiedPhone' => $this->store->getVerifiedPhoneNumber($user),
+        ]);
+    }
+
+    public function testSend(): RedirectResponse
+    {
+        if (! $this->whatsAppTestIsRelevant()) {
+            return redirect()->route('whatsapp-settings');
+        }
+
+        $user  = auth()->user();
+        $phone = trim((string) $this->request->getPost('phone'));
+
+        if (! $this->looksLikeAPhoneNumber($phone)) {
+            return redirect()->back()->withInput()->with('error', lang('WhatsAppMfa.invalidPhoneNumber'));
+        }
+
+        $code = $this->store->beginWhatsAppTest($user, $phone);
+
+        // Uses the CONFIGURED sender class, not a hardcoded
+        // `new TwilioWhatsAppSender()` - whatsAppTestIsRelevant() above
+        // already guarantees $this->config->sender is
+        // TwilioWhatsAppSender or a subclass of it, so this is safe,
+        // and it means a test can substitute a subclass that overrides
+        // the real network call without this method needing to know
+        // about that at all.
+        $senderClass = $this->config->sender;
+        /** @var TwilioWhatsAppSender $sender */
+        $sender = new $senderClass();
+
+        // Same sender-failure rollback pattern already applied
+        // throughout this package (see send() above, and
+        // WhatsAppActivator's own identical fix) - a real Twilio API
+        // error here shouldn't crash the request or leave an orphaned
+        // test-pending record behind.
+        try {
+            $sender->sendViaWhatsAppRegardlessOfChannel($phone, $code, $this->config);
+        } catch (\Throwable $e) {
+            $this->store->cancelWhatsAppTest($user);
+
+            return redirect()->back()->withInput()->with('error', lang('WhatsAppMfa.testSendFailedMessage'));
+        }
+
+        return redirect()->route('whatsapp-settings-test-verify');
+    }
+
+    public function testVerify(): string|RedirectResponse
+    {
+        if (! $this->whatsAppTestIsRelevant()) {
+            return redirect()->route('whatsapp-settings');
+        }
+
+        $user  = auth()->user();
+        $phone = $this->store->getWhatsAppTestPendingPhoneNumber($user);
+
+        if ($phone === null) {
+            return redirect()->route('whatsapp-settings-test-enroll')
+                ->with('error', lang('WhatsAppMfa.noPendingCode'));
+        }
+
+        return view($this->config->views['whatsapp_settings_test_verify'], [
+            'phone_masked' => $this->maskPhone($phone),
+        ]);
+    }
+
+    public function testConfirm(): RedirectResponse
+    {
+        if (! $this->whatsAppTestIsRelevant()) {
+            return redirect()->route('whatsapp-settings');
+        }
+
+        $user = auth()->user();
+        $code = trim((string) $this->request->getPost('code'));
+
+        if ($code === '' || ! $this->store->confirmWhatsAppTest($user, $code)) {
+            return redirect()->back()->with('error', lang('WhatsAppMfa.invalidCode'));
+        }
+
+        return redirect()->route('whatsapp-settings')->with('message', lang('WhatsAppMfa.testConfirmedMessage'));
     }
 
     /**

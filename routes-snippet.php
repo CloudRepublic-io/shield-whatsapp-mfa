@@ -60,6 +60,39 @@ $routes->group('', ['filter' => 'session'], static function ($routes) {
         ['as' => 'whatsapp-settings-disable']
     );
 
+    // "Test WhatsApp delivery" - a developer-facing migration tool for
+    // confirming a user's number works over WhatsApp specifically,
+    // ahead of an app-wide Config\WhatsAppMfa::$channel switch. See
+    // PhoneNumberStore's own doc comment ("Testing WhatsApp delivery
+    // ahead of a $channel migration") for the full account. Each
+    // controller action itself checks whether this is currently
+    // relevant (redirecting back to the main settings page if not), so
+    // no route-level guard is needed here beyond the same 'session'
+    // filter as the rest of this group.
+    $routes->get(
+        'account/whatsapp/test',
+        '\WhatsAppMfa\Controllers\WhatsAppSettingsController::testEnroll',
+        ['as' => 'whatsapp-settings-test-enroll']
+    );
+
+    $routes->post(
+        'account/whatsapp/test/send',
+        '\WhatsAppMfa\Controllers\WhatsAppSettingsController::testSend',
+        ['as' => 'whatsapp-settings-test-send']
+    );
+
+    $routes->get(
+        'account/whatsapp/test/verify',
+        '\WhatsAppMfa\Controllers\WhatsAppSettingsController::testVerify',
+        ['as' => 'whatsapp-settings-test-verify']
+    );
+
+    $routes->post(
+        'account/whatsapp/test/confirm',
+        '\WhatsAppMfa\Controllers\WhatsAppSettingsController::testConfirm',
+        ['as' => 'whatsapp-settings-test-confirm']
+    );
+
     // Step-up challenge shown by the RequireFreshWhatsApp filter.
     // Wrapped in the 'session' filter here too - this challenges an
     // EXISTING, already-logged-in session, it doesn't log anyone in, so

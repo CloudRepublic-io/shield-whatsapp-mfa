@@ -66,20 +66,51 @@ use Config\WhatsAppMfa as WhatsAppMfaConfig;
  *     a step-up challenge in progress interfere with an unrelated
  *     phone-change attempt, or vice versa. Safe to remain an identity,
  *     same reasoning as ID_TYPE_PHONE_PENDING.
+ *   - ID_TYPE_WHATSAPP_TEST_PENDING ('whatsapp_channel_test_pending') -
+ *     used only by the "test WhatsApp delivery" self-service action
+ *     (see "Testing WhatsApp delivery ahead of a $channel migration"
+ *     below) - deliberately separate from ID_TYPE_PHONE_PENDING too,
+ *     for the identical reason: starting a channel test shouldn't
+ *     silently cancel an unrelated in-progress "change my number"
+ *     attempt, or vice versa.
  *
  * Self-service settings-page verification (WhatsAppSettingsController)
  * and the login action's own per-login OTP code
  * (WhatsAppMfa::createIdentity()) are NOT wired into Shield's
  * pending-action check at all - only WhatsAppActivator's registration
  * flow is, via ID_TYPE_PHONE_ACTIVATE specifically.
+ *
+ * Testing WhatsApp delivery ahead of a $channel migration - a real,
+ * confirmed gap: Config\WhatsAppMfa::$channel is a single, app-wide
+ * setting, so a user whose number was only ever confirmed via SMS has
+ * no way to know whether WhatsApp will actually work for them until
+ * $channel is switched for everyone at once - Twilio's WhatsApp API
+ * accepts a send request regardless of whether the destination number
+ * can actually receive WhatsApp (that failure only surfaces later, via
+ * an async webhook this package doesn't implement), so a login
+ * attempt can silently fail the moment the switch happens. The methods
+ * below let a user test WhatsApp delivery specifically, independent of
+ * whatever $channel is currently configured, so a developer can
+ * confirm delivery for their whole user base BEFORE switching $channel
+ * for everyone - see WhatsAppSettingsController's own "test" actions,
+ * and the `php spark whatsapp:channel-status` command.
+ *
+ * The confirmed WhatsApp number is stored the same way as the main
+ * verified number (via Settings, not an identity) - but as a SEPARATE
+ * key, storing the actual number confirmed (not just a boolean), so a
+ * later change to the main verified number is automatically detected
+ * as stale rather than needing to remember to clear a separate flag
+ * everywhere the verified number changes.
  */
 class PhoneNumberStore
 {
-    public const ID_TYPE_PHONE_PENDING  = 'whatsapp_phone_pending';
-    public const ID_TYPE_PHONE_ACTIVATE = 'whatsapp_phone_activate';
-    public const ID_TYPE_PHONE_STEP_UP  = 'whatsapp_phone_step_up';
+    public const ID_TYPE_PHONE_PENDING        = 'whatsapp_phone_pending';
+    public const ID_TYPE_PHONE_ACTIVATE       = 'whatsapp_phone_activate';
+    public const ID_TYPE_PHONE_STEP_UP        = 'whatsapp_phone_step_up';
+    public const ID_TYPE_WHATSAPP_TEST_PENDING = 'whatsapp_channel_test_pending';
 
-    private const SETTING_KEY = 'WhatsAppMfa.verifiedPhoneNumber';
+    private const SETTING_KEY                 = 'WhatsAppMfa.verifiedPhoneNumber';
+    private const WHATSAPP_CONFIRMED_SETTING_KEY = 'WhatsAppMfa.whatsappChannelConfirmedNumber';
 
     protected UserIdentityModel $identities;
     protected WhatsAppMfaConfig $config;
@@ -281,6 +312,155 @@ class PhoneNumberStore
     public function removeVerifiedPhoneNumber(User $user): void
     {
         service('settings')->forget(self::SETTING_KEY, $this->contextFor($user));
+        // A removed number can no longer be "confirmed for WhatsApp" -
+        // there's nothing left for that confirmation to refer to.
+        service('settings')->forget(self::WHATSAPP_CONFIRMED_SETTING_KEY, $this->contextFor($user));
+    }
+
+    // -------------------------------------------------------------------
+    // Testing WhatsApp delivery ahead of a $channel migration - see this
+    // class's own doc comment for the full account of why this exists.
+    // Entirely independent of ID_TYPE_PHONE_PENDING (the normal
+    // "change my number" flow) and of Config\WhatsAppMfa::$channel - a
+    // test attempt always sends via WhatsApp specifically, regardless
+    // of what $channel is currently configured to.
+    // -------------------------------------------------------------------
+
+    /**
+     * What phone number a WhatsApp channel test is currently pending
+     * for, if any - used by the "enter code" view, same purpose as
+     * getPendingPhoneNumber() but for the separate test flow.
+     */
+    public function getWhatsAppTestPendingPhoneNumber(User $user): ?string
+    {
+        $pending = $this->identities
+            ->where('user_id', $user->id)
+            ->where('type', self::ID_TYPE_WHATSAPP_TEST_PENDING)
+            ->first();
+
+        return $pending->name ?? null;
+    }
+
+    /**
+     * Starts a WhatsApp channel test for the given number, returning
+     * the plaintext code for the caller to actually send - same "no
+     * sender dependency of its own" reasoning as beginVerification().
+     * The caller is expected to send this via WhatsApp SPECIFICALLY
+     * (TwilioWhatsAppSender::sendViaWhatsAppRegardlessOfChannel()),
+     * regardless of Config\WhatsAppMfa::$channel's own current value.
+     */
+    public function beginWhatsAppTest(User $user, string $phoneNumber): string
+    {
+        $this->identities
+            ->where('user_id', $user->id)
+            ->where('type', self::ID_TYPE_WHATSAPP_TEST_PENDING)
+            ->delete();
+
+        $code = $this->generateCode();
+
+        $this->identities->create([
+            'user_id' => $user->id,
+            'type'    => self::ID_TYPE_WHATSAPP_TEST_PENDING,
+            'name'    => $phoneNumber,
+            'secret'  => password_hash($code, PASSWORD_DEFAULT),
+            'extra'   => null,
+            'expires' => date('Y-m-d H:i:s', time() + $this->config->codeLifetime),
+        ]);
+
+        return $code;
+    }
+
+    /**
+     * Checks the submitted code against the pending WhatsApp channel
+     * test, and on success, records that number as confirmed to work
+     * over WhatsApp specifically - a SEPARATE record from the main
+     * verified number (see this class's own doc comment for why:
+     * storing the confirmed NUMBER, not just a boolean, so a later
+     * change to the main verified number is automatically detected as
+     * stale). Returns false (never throws) on any failure - a wrong,
+     * expired, or missing code is a normal, expected outcome to handle
+     * gracefully.
+     */
+    public function confirmWhatsAppTest(User $user, string $code): bool
+    {
+        $pending = $this->identities
+            ->where('user_id', $user->id)
+            ->where('type', self::ID_TYPE_WHATSAPP_TEST_PENDING)
+            ->first();
+
+        if ($pending === null) {
+            return false;
+        }
+
+        if ($pending->expires !== null && $pending->expires->getTimestamp() < time()) {
+            $this->identities->delete($pending->id);
+
+            return false;
+        }
+
+        if (! password_verify($code, $pending->secret)) {
+            return false;
+        }
+
+        $phoneNumber = $pending->name;
+        $this->identities->delete($pending->id);
+
+        service('settings')->set(self::WHATSAPP_CONFIRMED_SETTING_KEY, $phoneNumber, $this->contextFor($user));
+
+        return true;
+    }
+
+    /**
+     * Rolls back a WhatsApp channel test that was started but never
+     * actually delivered - same reasoning as cancelVerification()/
+     * cancelStepUp(): a sender failure mid-send shouldn't leave an
+     * orphaned pending record behind that the user has no way to ever
+     * satisfy, since the code inside it was never actually sent.
+     */
+    public function cancelWhatsAppTest(User $user): void
+    {
+        $this->identities
+            ->where('user_id', $user->id)
+            ->where('type', self::ID_TYPE_WHATSAPP_TEST_PENDING)
+            ->delete();
+    }
+
+    /**
+     * Has WhatsApp delivery been confirmed for this user's CURRENT
+     * verified number specifically? Checking the stored confirmed
+     * number against the current verified number (rather than a plain
+     * boolean) means this correctly returns false the moment the
+     * verified number changes to something new that hasn't itself been
+     * tested yet - no separate step needed to remember to clear a
+     * stale flag.
+     */
+    public function hasConfirmedWhatsAppDelivery(User $user): bool
+    {
+        $verifiedNumber = $this->getVerifiedPhoneNumber($user);
+
+        if ($verifiedNumber === null) {
+            return false;
+        }
+
+        $confirmedNumber = service('settings')->get(self::WHATSAPP_CONFIRMED_SETTING_KEY, $this->contextFor($user));
+
+        return $confirmedNumber === $verifiedNumber;
+    }
+
+    /**
+     * The specific number WhatsApp delivery was last confirmed for, if
+     * any - regardless of whether it still matches the current
+     * verified number (unlike hasConfirmedWhatsAppDelivery(), which
+     * checks that match). Used by the `whatsapp:channel-status` CLI
+     * command to show a genuinely stale confirmation distinctly from
+     * "never tested at all", rather than collapsing both into the same
+     * "not confirmed" result.
+     */
+    public function getConfirmedWhatsAppNumber(User $user): ?string
+    {
+        $value = service('settings')->get(self::WHATSAPP_CONFIRMED_SETTING_KEY, $this->contextFor($user));
+
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     // -------------------------------------------------------------------
@@ -379,5 +559,59 @@ class PhoneNumberStore
         }
 
         return $code;
+    }
+
+    /**
+     * Every user_id with a verified phone number on file, alongside
+     * that number and whether WhatsApp delivery has been confirmed for
+     * it specifically - used by `php spark whatsapp-mfa:channel-status`
+     * to give a developer an at-a-glance view of how ready their user
+     * base is for a Config\WhatsAppMfa::$channel migration to
+     * 'whatsapp', without needing to query the Settings table by hand.
+     *
+     * Queries the `settings` table directly (CodeIgniter's own
+     * codeigniter4/settings package, confirmed against its own test
+     * suite: columns class/key/value/type/context) rather than through
+     * service('settings') itself, since that library has no "list every
+     * context a given key was ever set under" method - only get/set/
+     * forget for one context at a time. If your app has configured a
+     * non-default table name for that library, update $settingsTable
+     * below to match.
+     *
+     * @return array<int, array{user_id: int, verified_number: string, whatsapp_confirmed: bool}>
+     */
+    public function listVerificationStatuses(): array
+    {
+        $settingsTable = 'settings';
+
+        $rows = db_connect()
+            ->table($settingsTable)
+            ->where('class', 'WhatsAppMfa')
+            ->where('key', 'verifiedPhoneNumber')
+            ->get()
+            ->getResultArray();
+
+        $statuses = [];
+
+        foreach ($rows as $row) {
+            $context = (string) ($row['context'] ?? '');
+
+            if (! str_starts_with($context, 'user:')) {
+                continue;
+            }
+
+            $userId         = (int) substr($context, 5);
+            $verifiedNumber = (string) $row['value'];
+
+            $confirmedNumber = service('settings')->get(self::WHATSAPP_CONFIRMED_SETTING_KEY, $context);
+
+            $statuses[] = [
+                'user_id'            => $userId,
+                'verified_number'    => $verifiedNumber,
+                'whatsapp_confirmed' => $confirmedNumber === $verifiedNumber,
+            ];
+        }
+
+        return $statuses;
     }
 }

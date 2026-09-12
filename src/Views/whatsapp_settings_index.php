@@ -34,6 +34,20 @@
             <?= lang('WhatsAppMfa.removeButton') ?>
         </button>
     </form>
+
+    <?php if ($testIsRelevant) : ?>
+        <hr class="my-3">
+        <p class="text-muted small">
+            <?= $whatsAppConfirmed ? lang('WhatsAppMfa.testStatusConfirmed') : lang('WhatsAppMfa.testStatusNotConfirmed') ?>
+        </p>
+        <?php if ($whatsAppConfirmed) : ?>
+            <p><?= lang('WhatsAppMfa.testAlreadyConfirmed') ?></p>
+        <?php else : ?>
+            <a href="<?= url_to('whatsapp-settings-test-enroll') ?>" class="btn btn-outline-primary btn-sm">
+                <?= lang('WhatsAppMfa.testButton') ?>
+            </a>
+        <?php endif ?>
+    <?php endif ?>
 <?php endif ?>
 
 <?= $this->endSection() ?>

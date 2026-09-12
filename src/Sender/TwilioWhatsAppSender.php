@@ -77,6 +77,40 @@ class TwilioWhatsAppSender implements WhatsAppSenderInterface
     }
 
     /**
+     * Sends via WhatsApp SPECIFICALLY, regardless of what
+     * $config->channel is currently set to - used by the self-service
+     * "test WhatsApp delivery" flow (WhatsAppSettingsController), so a
+     * user can confirm WhatsApp actually works for their number ahead
+     * of an app-wide $channel migration, without that migration having
+     * happened yet. See PhoneNumberStore's own doc comment ("Testing
+     * WhatsApp delivery ahead of a $channel migration") for the fuller
+     * account of why this exists.
+     *
+     * Implemented as a thin wrapper around send() itself - clones the
+     * config and overrides just the one property for this call, so all
+     * of buildFields()'s own To/From/Body logic is reused exactly as
+     * written, rather than duplicating it.
+     */
+    public function sendViaWhatsAppRegardlessOfChannel(string $phoneNumber, string $code, WhatsAppMfaConfig $config): void
+    {
+        $this->send($phoneNumber, $code, $this->forceWhatsAppChannel($config));
+    }
+
+    /**
+     * Clones $config with channel forced to 'whatsapp' - extracted into
+     * its own protected method specifically so a test can verify this
+     * forcing behavior directly, without needing to trigger send()'s
+     * own real network call.
+     */
+    protected function forceWhatsAppChannel(WhatsAppMfaConfig $config): WhatsAppMfaConfig
+    {
+        $forcedConfig          = clone $config;
+        $forcedConfig->channel = 'whatsapp';
+
+        return $forcedConfig;
+    }
+
+    /**
      * Builds the exact POST fields for Twilio's Messages API, entirely
      * separately from actually sending them - deliberately `protected`
      * (not `private`) specifically so a test can call this directly via

@@ -24,11 +24,13 @@ src/
   Authentication/Actions/
     WhatsAppMfa.php                       <- 'login' action: sends + verifies a fresh code each time
     WhatsAppActivator.php                 <- 'register' action: optional phone verification at signup
-  Commands/Setup.php                      <- `php spark whatsapp-mfa:setup`
+  Commands/
+    Setup.php                             <- `php spark whatsapp-mfa:setup`
+    ChannelStatus.php                     <- `php spark whatsapp-mfa:channel-status` - migration readiness report
   Config/WhatsAppMfa.php                  <- provider + credentials config, step-up settings, view overrides
   Controllers/
     WhatsAppActivatorController.php       <- handles WhatsAppActivator's "skip for now" link
-    WhatsAppSettingsController.php        <- self-service phone verification
+    WhatsAppSettingsController.php        <- self-service phone verification + WhatsApp channel test flow
     WhatsAppStepUpController.php          <- step-up challenge (send + verify)
   Filters/RequireFreshWhatsApp.php        <- step-up auth filter for sensitive routes
   Sender/WhatsAppSenderInterface.php      <- contract for delivery providers
@@ -36,7 +38,8 @@ src/
   Sender/TwilioWhatsAppSender.php         <- Twilio alternative - WhatsApp or SMS, via $channel
   Language/en/WhatsAppMfa.php
   Libraries/
-    PhoneNumberStore.php                  <- shared verified-phone storage/verification/step-up logic
+    PhoneNumberStore.php                  <- shared verified-phone storage/verification/step-up logic,
+                                              plus WhatsApp channel-test tracking
     CompletesPendingAction.php            <- shared "finish this pending action" trait
     ChannelLabel.php                      <- resolves {channel} placeholders to "WhatsApp"/"SMS"
   Views/
@@ -44,9 +47,11 @@ src/
     whatsapp_mfa_verify.php               <- "enter your code" + resend (login)
     whatsapp_activator_enroll.php         <- phone entry + skip (registration)
     whatsapp_activator_verify.php         <- confirm the code sent to it (registration)
-    whatsapp_settings_index.php           <- current verified number, add/change/remove
+    whatsapp_settings_index.php           <- current verified number, add/change/remove, channel-test status
     whatsapp_settings_enroll.php          <- enter a phone number to verify (self-service)
     whatsapp_settings_verify.php          <- confirm the code sent to it (self-service)
+    whatsapp_settings_test_enroll.php     <- enter a number to test WhatsApp delivery on
+    whatsapp_settings_test_verify.php     <- confirm the WhatsApp test code
     whatsapp_step_up_show.php             <- "we're about to send a code" (step-up)
     whatsapp_step_up_verify.php           <- confirm the code sent to it (step-up)
 routes-snippet.php                        <- routes to add by hand
@@ -365,6 +370,119 @@ reflect something that changes at runtime") for why this is a config
 entry you add yourself, rather than something wired in automatically -
 that package stays deliberately ignorant of what any given method
 actually is.
+
+## Migrating an existing user base from SMS to WhatsApp (or back) safely
+
+**The risk, confirmed by a real report:** a user's own preference for
+this method (`'whatsapp'`, the method key) is stored independently of
+which channel actually delivers it. Someone who set this as their
+preference while `$channel` was `'sms'` keeps that same preference
+after you switch to `'whatsapp'` - it takes effect at their very next
+login, with no grace period at all. If their number was only ever
+confirmed to receive SMS, not WhatsApp specifically, a login attempt
+can now silently fail: Twilio's WhatsApp API accepts the send request
+regardless of whether the destination number can actually receive
+WhatsApp - a real, documented failure mode (Twilio's own error 30013,
+"Recipient not on WhatsApp") only surfaces later, via an asynchronous
+delivery-status webhook this package doesn't implement - so from this
+package's own point of view, the send looked like it succeeded, even
+though the code never arrived.
+
+### The recommended path: test WhatsApp delivery individually, per user, before switching
+
+The self-service settings page (`account/whatsapp`) has a "Test
+WhatsApp delivery" action, available whenever `$channel` is currently
+`'sms'` and the configured sender is `TwilioWhatsAppSender` (if
+`$channel` is already `'whatsapp'`, or you're using a sender with no
+channel concept at all, the normal verify flow already tests WhatsApp
+directly, so this action doesn't appear at all - there's nothing extra
+to test). It sends a real WhatsApp message - via
+`TwilioWhatsAppSender::sendViaWhatsAppRegardlessOfChannel()`,
+independent of whatever `$channel` is actually configured to - and, on
+success, records that the user's number is confirmed to work over
+WhatsApp specifically. This is a *separate* record from the main
+verified number, so a user can test WhatsApp delivery at any time,
+well before you ever touch `$channel`, without it affecting their
+actual login method at all until you switch.
+
+This solves the chicken-and-egg problem the single-channel-switch
+approach has: rather than switching `$channel` for everyone at once and
+hoping their numbers work, users can confirm WhatsApp delivery
+individually, whenever it suits them, and you only flip the switch once
+you know how many are actually ready.
+
+**`php spark whatsapp-mfa:channel-status`** gives you that visibility -
+a read-only command listing every user with a verified number, whether
+WhatsApp delivery has been confirmed for it, and a summary count. Run
+it with `--unconfirmed-only` to see just the users who still need to
+test. It's genuinely read-only: it never sends anything or changes any
+record, so it's safe to run as often as you like while migrating.
+
+**Confirming which user's number matches which record deliberately
+compares the actual number, not just a boolean flag.** If a user later
+changes their verified number after confirming WhatsApp delivery for
+an earlier one, `hasConfirmedWhatsAppDelivery()` correctly reports
+`false` for the new, untested number - there's no separate step you
+need to remember to re-run when a number changes.
+
+**This is deliberately kept off `shield-mfa-dispatcher`'s own settings
+page entirely**, even if you're using both packages together. This is
+an operational, developer-facing migration tool for moving your user
+base between channels in a controlled way - not a normal end-user MFA
+concept a regular user needs to understand, so it stays specific to
+this package's own settings page.
+
+### The older, still-valid fallback: re-verify via the normal flow
+
+If you're not using `TwilioWhatsAppSender`'s channel toggle at all (a
+custom sender, or `MetaCloudApiSender`), or simply prefer not to add
+the test flow, the normal verify flow still provides a safe path,
+just requiring the switch to happen first:
+
+`beginVerification()` only ever writes to a separate, temporary pending
+record; the *permanent* verified number (stored via Settings) is only
+overwritten by `confirmVerification()`, and only once a code has
+actually been confirmed. This means starting a fresh verification
+attempt - even re-entering the exact same number a user already has -
+never touches their existing, working verified number unless the new
+attempt actually succeeds. Concretely:
+
+1. **Switch `$channel` to `'whatsapp'`.**
+2. **Before relying on it for anyone, have each existing user
+   re-verify their number via the self-service settings page** (the
+   same "change number" flow, re-entering the number they already
+   have) - while they're still fully logged in via whatever method
+   currently works for them, not during a login challenge.
+3. **If the WhatsApp message arrives and they confirm it**, their
+   number is now proven to actually work, and their permanent record is
+   safely re-set to the same value.
+4. **If it doesn't arrive**, nothing about their account changes -
+   their existing, working verified number stays completely intact,
+   since `confirmVerification()` never ran. They're still logged in,
+   not locked out, and can retry, switch their own MFA preference to a
+   different method, or flag it to you - all while still authenticated,
+   rather than discovering the problem stuck at a login screen.
+
+The test-flow approach above avoids this fallback's own main
+drawback - everyone being affected by the `$channel` switch
+simultaneously, rather than confirmed individually beforehand.
+
+**If you're also using `shield-mfa-dispatcher`'s
+`$requiredMethodsForGroups`, be extra careful with the order here,
+regardless of which path you use above.** Don't add this method as
+*required* for any group until you've confirmed that everyone currently
+in that group actually has it working. A required method overrides a
+user's own preference entirely, which removes the fallback safety net
+this migration path otherwise depends on - if it's required and their
+number turns out not to work, they have no way to fall back to a
+different method at all.
+
+The same reasoning applies in reverse if you ever migrate back from
+WhatsApp to SMS - the test-flow action above is specific to testing
+WhatsApp, so for that direction, re-verifying via the normal flow (the
+fallback approach above) is the way to confirm SMS delivery still
+works for a given number, before an app-wide switch takes effect for
+everyone at once.
 
 ## Security notes
 
@@ -704,12 +822,17 @@ affected by the session/pending-state issues specifically.
 generation and sending via a fake sender, so no real network call ever
 happens, plus correct/wrong/empty/expired code handling),
 `WhatsAppActivator` (the registration-time counterpart - phone entry,
-send, verify, skip), `PhoneNumberStore`, the self-service settings
-controller, the step-up auth filter/controller, `TwilioWhatsAppSender`'s
-own channel-switching field-building logic (`$channel` = `'whatsapp'`
-vs `'sms'` - see "Sending via SMS instead of WhatsApp" above), and
-`ChannelLabel` (the `{channel}` placeholder substitution that feature
-relies on).
+send, verify, skip), `PhoneNumberStore` (including the WhatsApp
+channel-test flow's own tracking - see "Migrating an existing user
+base" above), the self-service settings controller (including its own
+test-flow actions), the step-up auth filter/controller,
+`TwilioWhatsAppSender`'s own channel-switching field-building logic
+(`$channel` = `'whatsapp'` vs `'sms'`) and its forced-WhatsApp sending
+(`sendViaWhatsAppRegardlessOfChannel()`), `ChannelLabel` (the
+`{channel}` placeholder substitution that feature relies on), and the
+`whatsapp-mfa:channel-status` CLI command itself (via CI4's own
+`StreamFilterTrait`, capturing real command output rather than only
+testing the underlying data method in isolation).
 
 ```
 tests/WhatsAppMfa/
@@ -719,19 +842,31 @@ tests/WhatsAppMfa/
   Support/TestableWhatsAppMfa.php   <- fixes the phone number for testing, since Shield's
                                         stock User entity has no phone column
   Support/TestableTwilioWhatsAppSender.php <- exposes TwilioWhatsAppSender's protected
-                                                buildFields() for direct testing, no HTTP call needed
+                                                buildFields()/forceWhatsAppChannel() for direct
+                                                testing, no HTTP call needed
+  Support/FakeTwilioWhatsAppSender.php <- a TwilioWhatsAppSender SUBCLASS (not the more general
+                                            FakeWhatsAppSender) overriding only send() itself, so a
+                                            test exercises the real sendViaWhatsAppRegardlessOfChannel()/
+                                            forceWhatsAppChannel() logic while avoiding a real network
+                                            call - needed since the controller's own relevance check
+                                            requires an actual TwilioWhatsAppSender subclass
   Authentication/Actions/WhatsAppMfaTest.php
   Authentication/Actions/WhatsAppActivatorTest.php <- registration-time counterpart, including
                                                         the $wasAlreadyActive / forced-setup-reuse fix
   Libraries/PhoneNumberStoreTest.php       <- pending-to-permanent record lifecycle, step-up challenges,
-                                               and regression tests for the fixed duplicate-key bugs
+                                               regression tests for the fixed duplicate-key bugs, and
+                                               the WhatsApp channel-test tracking (including staleness
+                                               when the verified number later changes)
   Libraries/ChannelLabelTest.php           <- {channel} placeholder resolution/substitution
-  Controllers/WhatsAppSettingsControllerTest.php <- enroll/send/verify/confirm/disable
+  Controllers/WhatsAppSettingsControllerTest.php <- enroll/send/verify/confirm/disable, plus the
+                                                      test-flow actions and their own relevance guard
   Filters/RequireFreshWhatsAppTest.php     <- step-up freshness/enrollment logic
   Controllers/WhatsAppStepUpControllerTest.php <- step-up show/send/verify, including a
                                                     regression test for the back()-vs-route() fix
   Sender/TwilioWhatsAppSenderTest.php      <- WhatsApp vs SMS field-building (To/From prefixing,
-                                                Content Template ignored entirely for SMS)
+                                                Content Template ignored entirely for SMS), plus
+                                                forceWhatsAppChannel()'s own override behavior
+  Commands/ChannelStatusTest.php           <- the whatsapp-mfa:channel-status CLI command itself
 ```
 
 ### Setup

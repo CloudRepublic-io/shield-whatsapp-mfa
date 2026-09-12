@@ -365,4 +365,144 @@ final class PhoneNumberStoreTest extends CIUnitTestCase
             'type'    => PhoneNumberStore::ID_TYPE_PHONE_ACTIVATE,
         ]);
     }
+
+    // -------------------------------------------------------------------
+    // Testing WhatsApp delivery ahead of a $channel migration - see this
+    // class's own doc comment for the full account of why this exists.
+    // -------------------------------------------------------------------
+
+    public function testHasNotConfirmedWhatsAppDeliveryByDefault(): void
+    {
+        $user = $this->makeUser();
+
+        $this->assertFalse($this->store->hasConfirmedWhatsAppDelivery($user));
+        $this->assertNull($this->store->getConfirmedWhatsAppNumber($user));
+    }
+
+    public function testBeginWhatsAppTestCreatesAPendingRecordSeparateFromTheNormalOne(): void
+    {
+        $user = $this->makeUser();
+
+        // A normal "change my number" attempt already in progress...
+        $this->store->beginVerification($user, '+15551110000');
+
+        // ...must not be disturbed by starting a channel test.
+        $code = $this->store->beginWhatsAppTest($user, '+15552220000');
+
+        $this->assertMatchesRegularExpression('/^[1-9]{6}$/', $code);
+        $this->assertSame('+15552220000', $this->store->getWhatsAppTestPendingPhoneNumber($user));
+        $this->assertSame('+15551110000', $this->store->getPendingPhoneNumber($user));
+    }
+
+    public function testCorrectCodeConfirmsWhatsAppDeliveryWithoutTouchingTheVerifiedNumber(): void
+    {
+        $user = $this->makeUser();
+
+        // An existing, working verified number from a prior SMS
+        // verification.
+        $existingCode = $this->store->beginVerification($user, '+15551110000');
+        $this->store->confirmVerification($user, $existingCode);
+
+        $testCode = $this->store->beginWhatsAppTest($user, '+15551110000');
+        $confirmed = $this->store->confirmWhatsAppTest($user, $testCode);
+
+        $this->assertTrue($confirmed);
+        $this->assertTrue($this->store->hasConfirmedWhatsAppDelivery($user));
+        // THE regression point: the main verified number is completely
+        // unaffected by a channel test, successful or not.
+        $this->assertSame('+15551110000', $this->store->getVerifiedPhoneNumber($user));
+    }
+
+    /**
+     * THE regression test for the actual point of storing the
+     * confirmed NUMBER, not just a boolean: confirming WhatsApp works
+     * for number A, then changing the verified number to B, must
+     * correctly report "not confirmed" for B - it was never tested.
+     */
+    public function testConfirmationBecomesStaleWhenTheVerifiedNumberLaterChanges(): void
+    {
+        $user = $this->makeUser();
+
+        $firstCode = $this->store->beginVerification($user, '+15551110000');
+        $this->store->confirmVerification($user, $firstCode);
+
+        $testCode = $this->store->beginWhatsAppTest($user, '+15551110000');
+        $this->store->confirmWhatsAppTest($user, $testCode);
+
+        $this->assertTrue($this->store->hasConfirmedWhatsAppDelivery($user));
+
+        // User changes their verified number to something never tested.
+        $secondCode = $this->store->beginVerification($user, '+15559990000');
+        $this->store->confirmVerification($user, $secondCode);
+
+        $this->assertFalse($this->store->hasConfirmedWhatsAppDelivery($user));
+        // The stale confirmation is still visible via its own getter,
+        // distinctly from "never tested at all" - used by the CLI
+        // command to report accurately, not just collapse both into
+        // the same "not confirmed" result.
+        $this->assertSame('+15551110000', $this->store->getConfirmedWhatsAppNumber($user));
+    }
+
+    public function testWrongCodeFailsWhatsAppTestGracefullyAndChangesNothing(): void
+    {
+        $user = $this->makeUser();
+        $this->store->beginWhatsAppTest($user, '+15551110000');
+
+        $this->assertFalse($this->store->confirmWhatsAppTest($user, '000000'));
+        $this->assertFalse($this->store->hasConfirmedWhatsAppDelivery($user));
+    }
+
+    public function testCancelWhatsAppTestRemovesThePendingAttempt(): void
+    {
+        $user = $this->makeUser();
+        $this->store->beginWhatsAppTest($user, '+15551110000');
+
+        $this->store->cancelWhatsAppTest($user);
+
+        $this->assertNull($this->store->getWhatsAppTestPendingPhoneNumber($user));
+    }
+
+    public function testRemovingTheVerifiedNumberClearsAnyWhatsAppConfirmationToo(): void
+    {
+        $user = $this->makeUser();
+
+        $verifyCode = $this->store->beginVerification($user, '+15551110000');
+        $this->store->confirmVerification($user, $verifyCode);
+
+        $testCode = $this->store->beginWhatsAppTest($user, '+15551110000');
+        $this->store->confirmWhatsAppTest($user, $testCode);
+
+        $this->assertTrue($this->store->hasConfirmedWhatsAppDelivery($user));
+
+        $this->store->removeVerifiedPhoneNumber($user);
+
+        $this->assertNull($this->store->getConfirmedWhatsAppNumber($user));
+    }
+
+    public function testListVerificationStatusesReflectsMultipleUsers(): void
+    {
+        $confirmedUser   = $this->makeUser();
+        $unconfirmedUser = $this->makeUser();
+
+        $code1 = $this->store->beginVerification($confirmedUser, '+15551110000');
+        $this->store->confirmVerification($confirmedUser, $code1);
+        $testCode = $this->store->beginWhatsAppTest($confirmedUser, '+15551110000');
+        $this->store->confirmWhatsAppTest($confirmedUser, $testCode);
+
+        $code2 = $this->store->beginVerification($unconfirmedUser, '+15552220000');
+        $this->store->confirmVerification($unconfirmedUser, $code2);
+
+        $statuses = $this->store->listVerificationStatuses();
+        $byUserId = [];
+
+        foreach ($statuses as $status) {
+            $byUserId[$status['user_id']] = $status;
+        }
+
+        $this->assertArrayHasKey($confirmedUser->id, $byUserId);
+        $this->assertArrayHasKey($unconfirmedUser->id, $byUserId);
+        $this->assertTrue($byUserId[$confirmedUser->id]['whatsapp_confirmed']);
+        $this->assertFalse($byUserId[$unconfirmedUser->id]['whatsapp_confirmed']);
+        $this->assertSame('+15551110000', $byUserId[$confirmedUser->id]['verified_number']);
+    }
 }

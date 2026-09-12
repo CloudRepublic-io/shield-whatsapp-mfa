@@ -43,6 +43,20 @@ return [
     'phoneVerifiedMessage' => '{channel} number verified.',
     'phoneRemovedMessage'  => '{channel} number removed.',
 
+    // Testing WhatsApp delivery ahead of a $channel migration - see
+    // PhoneNumberStore's own doc comment for the full account of why
+    // this is a separate flow from the main enroll/verify above.
+    'testHeading'             => 'Test WhatsApp delivery',
+    'testIntro'               => 'Your account currently sends codes via SMS. Use this to confirm a number can also receive WhatsApp messages, ahead of a possible future switch - this won\'t change how you actually sign in today.',
+    'testAlreadyConfirmed'    => 'WhatsApp delivery already confirmed for this number.',
+    'testButton'              => 'Test WhatsApp delivery',
+    'testSendCodeButton'      => 'Send test code via WhatsApp',
+    'testSendFailedMessage'   => 'We couldn\'t send a test WhatsApp message right now. Please try again in a moment.',
+    'testConfirmedMessage'    => 'WhatsApp delivery confirmed for this number.',
+    'testConfirmIntro'        => 'Enter the 6-digit WhatsApp code we sent to the number ending in {phone}.',
+    'testStatusConfirmed'     => 'WhatsApp delivery confirmed',
+    'testStatusNotConfirmed'  => 'WhatsApp delivery not yet tested',
+
     // Registration-time activator
     'skipButton' => 'Skip for now',
 

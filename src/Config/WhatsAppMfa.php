@@ -6,7 +6,7 @@ namespace Config;
 
 use CodeIgniter\Config\BaseConfig;
 use WhatsAppMfa\Sender\MetaCloudApiSender;
-use WhatsAppMfa\Sender\TwilioWhatsAppSender;
+use WhatsAppMfa\Sender\WhatsAppSenderInterface;
 
 /**
  * Copy this file to app/Config/WhatsAppMfa.php in the host application

@@ -12,6 +12,7 @@ use CodeIgniter\Shield\Models\UserModel;
 use CodeIgniter\Shield\Test\AuthenticationTesting;
 use CodeIgniter\Test\CIUnitTestCase;
 use CodeIgniter\Test\DatabaseTestTrait;
+use Tests\WhatsAppMfa\Support\FakeTwilioWhatsAppSender;
 use Tests\WhatsAppMfa\Support\FakeWhatsAppSender;
 use WhatsAppMfa\Controllers\WhatsAppSettingsController;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
@@ -210,5 +211,110 @@ final class WhatsAppSettingsControllerTest extends CIUnitTestCase
         $this->makeController()->disable();
 
         $this->assertFalse($store->hasVerifiedPhoneNumber($user));
+    }
+
+    // -------------------------------------------------------------------
+    // Testing WhatsApp delivery ahead of a $channel migration - see
+    // PhoneNumberStore's own doc comment for the full account of why
+    // this flow exists. FakeTwilioWhatsAppSender (not the more general
+    // FakeWhatsAppSender used everywhere above) is used throughout
+    // this section specifically because it's the only fake that
+    // passes whatsAppTestIsRelevant()'s own is_a() check.
+    // -------------------------------------------------------------------
+
+    private function makeTestFlowRelevant(): void
+    {
+        config('WhatsAppMfa')->channel = 'sms';
+        config('WhatsAppMfa')->sender  = FakeTwilioWhatsAppSender::class;
+        FakeTwilioWhatsAppSender::reset();
+    }
+
+    public function testIndexDoesNotOfferTheTestFlowWhenChannelIsAlreadyWhatsApp(): void
+    {
+        $user = $this->makeUser();
+        $this->actingAs($user);
+
+        config('WhatsAppMfa')->channel = 'whatsapp';
+        config('WhatsAppMfa')->sender  = FakeTwilioWhatsAppSender::class;
+
+        $store = new PhoneNumberStore();
+        $code  = $store->beginVerification($user, '+15551234567');
+        $store->confirmVerification($user, $code);
+
+        $body = $this->makeController()->index();
+
+        $this->assertStringNotContainsString(lang('WhatsAppMfa.testButton'), $body);
+    }
+
+    public function testTestEnrollRedirectsAwayWhenNotRelevant(): void
+    {
+        $user = $this->makeUser();
+        $this->actingAs($user);
+
+        config('WhatsAppMfa')->channel = 'whatsapp'; // not relevant - already on WhatsApp
+
+        $response = $this->makeController()->testEnroll();
+
+        $this->assertInstanceOf(RedirectResponse::class, $response);
+    }
+
+    public function testTestSendDispatchesViaWhatsAppRegardlessOfConfiguredChannel(): void
+    {
+        $user = $this->makeUser();
+        $this->actingAs($user);
+        $this->makeTestFlowRelevant();
+
+        $this->makeController(['phone' => '+15551234567'])->testSend();
+
+        $this->assertSame('+15551234567', FakeTwilioWhatsAppSender::$lastPhoneNumber);
+        $this->assertNotNull(FakeTwilioWhatsAppSender::$lastCode);
+        // THE regression point: even though $channel is 'sms', the
+        // forced-WhatsApp send must still have used 'whatsapp'.
+        $this->assertSame('whatsapp', FakeTwilioWhatsAppSender::$lastChannelUsed);
+    }
+
+    public function testTestSendRollsBackThePendingTestWhenTheSenderFails(): void
+    {
+        $user = $this->makeUser();
+        $this->actingAs($user);
+        $this->makeTestFlowRelevant();
+        FakeTwilioWhatsAppSender::$shouldFail = true;
+
+        $this->makeController(['phone' => '+15551234567'])->testSend();
+
+        $store = new PhoneNumberStore();
+        $this->assertNull($store->getWhatsAppTestPendingPhoneNumber($user));
+        $this->assertNotEmpty(session('error'));
+    }
+
+    public function testTestConfirmWithCorrectCodeMarksWhatsAppDeliveryConfirmed(): void
+    {
+        $user = $this->makeUser();
+        $this->actingAs($user);
+        $this->makeTestFlowRelevant();
+
+        $store = new PhoneNumberStore();
+        $verifyCode = $store->beginVerification($user, '+15551234567');
+        $store->confirmVerification($user, $verifyCode);
+
+        $testCode = $store->beginWhatsAppTest($user, '+15551234567');
+
+        $this->makeController(['code' => $testCode])->testConfirm();
+
+        $this->assertTrue($store->hasConfirmedWhatsAppDelivery($user));
+    }
+
+    public function testTestConfirmWithWrongCodeFailsGracefully(): void
+    {
+        $user = $this->makeUser();
+        $this->actingAs($user);
+        $this->makeTestFlowRelevant();
+
+        $store = new PhoneNumberStore();
+        $store->beginWhatsAppTest($user, '+15551234567');
+
+        $this->makeController(['code' => '000000'])->testConfirm();
+
+        $this->assertFalse($store->hasConfirmedWhatsAppDelivery($user));
     }
 }

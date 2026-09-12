@@ -93,4 +93,54 @@ final class TwilioWhatsAppSenderTest extends CIUnitTestCase
 
         $this->assertSame('whatsapp', $config->channel);
     }
+
+    // -------------------------------------------------------------------
+    // sendViaWhatsAppRegardlessOfChannel() / forceWhatsAppChannel() -
+    // the channel-test flow's own forced-WhatsApp sending, independent
+    // of Config\WhatsAppMfa::$channel's own current value.
+    // -------------------------------------------------------------------
+
+    public function testForceWhatsAppChannelOverridesAnSmsConfiguredChannel(): void
+    {
+        $config          = $this->makeConfig();
+        $config->channel = 'sms';
+
+        $forced = (new TestableTwilioWhatsAppSender())->exposeForceWhatsAppChannel($config);
+
+        $this->assertSame('whatsapp', $forced->channel);
+    }
+
+    public function testForceWhatsAppChannelLeavesTheOriginalConfigUntouched(): void
+    {
+        $config          = $this->makeConfig();
+        $config->channel = 'sms';
+
+        (new TestableTwilioWhatsAppSender())->exposeForceWhatsAppChannel($config);
+
+        // THE regression point: forcing the channel for one send must
+        // not leak back into the original config object - other,
+        // concurrent uses of $config (e.g. a normal login-time send
+        // running in the same request) must still see 'sms'.
+        $this->assertSame('sms', $config->channel);
+    }
+
+    /**
+     * Confirms the forced config actually produces WhatsApp-formatted
+     * fields when passed through buildFields() - not just that the
+     * $channel property itself changed, but that it has the intended
+     * downstream effect.
+     */
+    public function testAConfigForcedToWhatsAppProducesWhatsAppFormattedFields(): void
+    {
+        $config                   = $this->makeConfig();
+        $config->channel          = 'sms';
+        $config->twilioFromNumber = '+14155238886';
+
+        $sender = new TestableTwilioWhatsAppSender();
+        $forced = $sender->exposeForceWhatsAppChannel($config);
+        $fields = $sender->exposeBuildFields('+15551234567', '123456', $forced);
+
+        $this->assertSame('whatsapp:+15551234567', $fields['To']);
+        $this->assertSame('whatsapp:+14155238886', $fields['From']);
+    }
 }
