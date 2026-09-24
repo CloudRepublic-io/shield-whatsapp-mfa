@@ -505,4 +505,33 @@ final class PhoneNumberStoreTest extends CIUnitTestCase
         $this->assertFalse($byUserId[$unconfirmedUser->id]['whatsapp_confirmed']);
         $this->assertSame('+15551110000', $byUserId[$confirmedUser->id]['verified_number']);
     }
+
+    /**
+     * THE regression test for the fix to a real, confirmed bug: an
+     * earlier version of this method queried the Settings library's
+     * own table directly, which a real report showed returning zero
+     * rows even with confirmed users on file (most likely a database
+     * group or table-name mismatch with the app's actual Settings
+     * configuration). The rewritten version iterates every user via
+     * UserModel::findAll() instead, reusing
+     * getVerifiedPhoneNumber()/hasConfirmedWhatsAppDelivery() directly
+     * - this specifically confirms a user with NO verified number at
+     * all (the new, key edge case introduced by iterating over every
+     * user rather than a targeted query) is correctly excluded, not
+     * accidentally included with a null/empty verified_number.
+     */
+    public function testListVerificationStatusesExcludesUsersWithNoVerifiedNumberAtAll(): void
+    {
+        $verifiedUser   = $this->makeUser();
+        $unverifiedUser = $this->makeUser(); // never calls beginVerification()/confirmVerification() at all
+
+        $code = $this->store->beginVerification($verifiedUser, '+15551110000');
+        $this->store->confirmVerification($verifiedUser, $code);
+
+        $statuses = $this->store->listVerificationStatuses();
+        $userIds  = array_column($statuses, 'user_id');
+
+        $this->assertContains($verifiedUser->id, $userIds);
+        $this->assertNotContains($unverifiedUser->id, $userIds);
+    }
 }

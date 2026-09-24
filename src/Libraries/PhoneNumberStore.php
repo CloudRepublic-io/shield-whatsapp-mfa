@@ -6,6 +6,7 @@ namespace WhatsAppMfa\Libraries;
 
 use CodeIgniter\Shield\Entities\User;
 use CodeIgniter\Shield\Models\UserIdentityModel;
+use CodeIgniter\Shield\Models\UserModel;
 use Config\WhatsAppMfa as WhatsAppMfaConfig;
 
 /**
@@ -567,48 +568,52 @@ class PhoneNumberStore
      * it specifically - used by `php spark whatsapp-mfa:channel-status`
      * to give a developer an at-a-glance view of how ready their user
      * base is for a Config\WhatsAppMfa::$channel migration to
-     * 'whatsapp', without needing to query the Settings table by hand.
+     * 'whatsapp', without needing to check each user individually by
+     * hand.
      *
-     * Queries the `settings` table directly (CodeIgniter's own
-     * codeigniter4/settings package, confirmed against its own test
-     * suite: columns class/key/value/type/context) rather than through
-     * service('settings') itself, since that library has no "list every
-     * context a given key was ever set under" method - only get/set/
-     * forget for one context at a time. If your app has configured a
-     * non-default table name for that library, update $settingsTable
-     * below to match.
+     * CONFIRMED, REAL BUG FIXED HERE: an earlier version of this method
+     * queried the Settings library's own `settings` table directly via
+     * db_connect() (with no group specified, so whichever database
+     * group is actually "default"), assuming both that exact table
+     * name and that the Settings library writes to that same default
+     * group. A real report showed this returning zero rows even with
+     * confirmed users on file - most likely because the app's actual
+     * Settings storage uses a different database group, though the
+     * table name itself, or some other environment-specific detail,
+     * could equally have been the mismatch. Rather than continuing to
+     * guess at the exact cause, this now reuses
+     * getVerifiedPhoneNumber()/hasConfirmedWhatsAppDelivery() directly
+     * - the exact same, already-proven Settings access every other
+     * method in this class already depends on - so there is no second,
+     * separate assumption about the Settings library's own storage
+     * details to get wrong.
+     *
+     * The trade-off: this loads every user via UserModel::findAll()
+     * rather than querying only the ones with a verified number
+     * directly, so it does more work than strictly necessary for a
+     * large user base. Acceptable here specifically because this is an
+     * occasional, developer-run diagnostic command, not something
+     * called on every request.
      *
      * @return array<int, array{user_id: int, verified_number: string, whatsapp_confirmed: bool}>
      */
     public function listVerificationStatuses(): array
     {
-        $settingsTable = 'settings';
-
-        $rows = db_connect()
-            ->table($settingsTable)
-            ->where('class', 'WhatsAppMfa')
-            ->where('key', 'verifiedPhoneNumber')
-            ->get()
-            ->getResultArray();
+        $users = model(UserModel::class)->findAll();
 
         $statuses = [];
 
-        foreach ($rows as $row) {
-            $context = (string) ($row['context'] ?? '');
+        foreach ($users as $user) {
+            $verifiedNumber = $this->getVerifiedPhoneNumber($user);
 
-            if (! str_starts_with($context, 'user:')) {
+            if ($verifiedNumber === null) {
                 continue;
             }
 
-            $userId         = (int) substr($context, 5);
-            $verifiedNumber = (string) $row['value'];
-
-            $confirmedNumber = service('settings')->get(self::WHATSAPP_CONFIRMED_SETTING_KEY, $context);
-
             $statuses[] = [
-                'user_id'            => $userId,
+                'user_id'            => $user->id,
                 'verified_number'    => $verifiedNumber,
-                'whatsapp_confirmed' => $confirmedNumber === $verifiedNumber,
+                'whatsapp_confirmed' => $this->hasConfirmedWhatsAppDelivery($user),
             ];
         }
 
