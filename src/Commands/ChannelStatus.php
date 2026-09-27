@@ -48,7 +48,16 @@ class ChannelStatus extends BaseCommand
             return;
         }
 
-        $unconfirmedOnly = (bool) CLI::getOption('unconfirmed-only');
+        // Checked in $params as well as CLI::getOption(): getOption()
+        // only sees the real process's command line, so the flag was
+        // silently ignored when this command was run any other way -
+        // command('whatsapp-mfa:channel-status --unconfirmed-only'), or
+        // $this->call() from another command - and every user was
+        // listed. Spark itself also passes options through $params
+        // (as a key with a null value for a bare flag), so this one
+        // check covers both.
+        $unconfirmedOnly = array_key_exists('unconfirmed-only', $params)
+            || (bool) CLI::getOption('unconfirmed-only');
         $users           = model(UserModel::class);
 
         $confirmedCount   = 0;
