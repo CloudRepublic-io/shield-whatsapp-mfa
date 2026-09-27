@@ -16,6 +16,13 @@ use Tests\WhatsAppMfa\Support\FakeWhatsAppSender;
 use Tests\WhatsAppMfa\Support\TestableWhatsAppMfa;
 use WhatsAppMfa\Authentication\Actions\WhatsAppMfa;
 
+// Loaded explicitly rather than autoloaded: a typical CodeIgniter app's
+// composer.json only maps Tests\Support\ (to tests/_support), so
+// Tests\WhatsAppMfa\Support\* isn't autoloadable, and PHPUnit only
+// loads *Test.php files itself.
+require_once __DIR__ . '/../../Support/FakeWhatsAppSender.php';
+require_once __DIR__ . '/../../Support/TestableWhatsAppMfa.php';
+
 /**
  * Tests the WhatsApp MFA action's handle()/verify() directly, rather
  * than through a full HTTP round-trip.
@@ -84,6 +91,15 @@ final class WhatsAppMfaTest extends CIUnitTestCase
     {
         parent::setUp();
 
+        // The Settings library's DatabaseHandler caches every value it has
+        // read in memory on the shared 'settings' service - which is where
+        // PhoneNumberStore keeps verified numbers. $refresh resets the
+        // database between tests, but not that cache, and user ids restart
+        // at 1 after each refresh - so a number verified for "user:1" in
+        // one test was still returned for a brand-new user:1 in the next.
+        // A fresh service per test reads the freshly-reset database.
+        \CodeIgniter\Config\Services::resetSingle('settings');
+
         $this->resetServices();
         session()->destroy();
         Services::routes()->loadRoutes();
@@ -118,6 +134,11 @@ final class WhatsAppMfaTest extends CIUnitTestCase
 
         /** @var IncomingRequest $request */
         $request = service('request', null, false);
+        // CodeIgniter 4.7+ reads POST from a shared 'superglobals' snapshot
+        // taken the first time anything touches the request, so the
+        // $_POST assignment above is invisible to it - setGlobal() works
+        // on 4.6 and 4.7 alike.
+        $request->setGlobal('post', $post);
 
         return $request;
     }

@@ -8,6 +8,12 @@ use CodeIgniter\Test\CIUnitTestCase;
 use Config\WhatsAppMfa as WhatsAppMfaConfig;
 use Tests\WhatsAppMfa\Support\TestableTwilioWhatsAppSender;
 
+// Loaded explicitly rather than autoloaded: a typical CodeIgniter app's
+// composer.json only maps Tests\Support\ (to tests/_support), so
+// Tests\WhatsAppMfa\Support\* isn't autoloadable, and PHPUnit only
+// loads *Test.php files itself.
+require_once __DIR__ . '/../Support/TestableTwilioWhatsAppSender.php';
+
 /**
  * Tests TwilioWhatsAppSender::buildFields() directly, in isolation -
  * confirms the channel-dependent To/From/Body logic added for

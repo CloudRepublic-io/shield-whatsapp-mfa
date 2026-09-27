@@ -16,6 +16,14 @@ use Tests\WhatsAppMfa\Support\FakeTwilioWhatsAppSender;
 use Tests\WhatsAppMfa\Support\FakeWhatsAppSender;
 use WhatsAppMfa\Controllers\WhatsAppSettingsController;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
+use WhatsAppMfa\Libraries\ChannelLabel;
+
+// Loaded explicitly rather than autoloaded: a typical CodeIgniter app's
+// composer.json only maps Tests\Support\ (to tests/_support), so
+// Tests\WhatsAppMfa\Support\* isn't autoloadable, and PHPUnit only
+// loads *Test.php files itself.
+require_once __DIR__ . '/../Support/FakeWhatsAppSender.php';
+require_once __DIR__ . '/../Support/FakeTwilioWhatsAppSender.php';
 
 /**
  * Tests the settings controller by calling its methods directly, via
@@ -48,6 +56,15 @@ final class WhatsAppSettingsControllerTest extends CIUnitTestCase
     {
         parent::setUp();
 
+        // The Settings library's DatabaseHandler caches every value it has
+        // read in memory on the shared 'settings' service - which is where
+        // PhoneNumberStore keeps verified numbers. $refresh resets the
+        // database between tests, but not that cache, and user ids restart
+        // at 1 after each refresh - so a number verified for "user:1" in
+        // one test was still returned for a brand-new user:1 in the next.
+        // A fresh service per test reads the freshly-reset database.
+        \CodeIgniter\Config\Services::resetSingle('settings');
+
         // Defensive: this controller's own views use url_to(), which
         // needs a populated route collection - a call to resetServices()
         // anywhere earlier in the same PHPUnit process (this package's
@@ -65,7 +82,7 @@ final class WhatsAppSettingsControllerTest extends CIUnitTestCase
     {
         return fake(UserModel::class, [
             'email'    => 'whatsapp-settings-test-' . uniqid() . '@example.com',
-            'username' => 'whatsappsettingstest' . uniqid(),
+            'username' => 'wasettest' . uniqid(),
             'password' => 'secret123456',
         ]);
     }
@@ -76,6 +93,11 @@ final class WhatsAppSettingsControllerTest extends CIUnitTestCase
 
         /** @var IncomingRequest $request */
         $request = service('request', null, false);
+        // CodeIgniter 4.7+ reads POST from a shared 'superglobals' snapshot
+        // taken the first time anything touches the request, so the
+        // $_POST assignment above is invisible to it - setGlobal() works
+        // on 4.6 and 4.7 alike.
+        $request->setGlobal('post', $post);
 
         $controller = new WhatsAppSettingsController();
         $controller->initController($request, service('response'), service('logger'));
@@ -90,7 +112,10 @@ final class WhatsAppSettingsControllerTest extends CIUnitTestCase
 
         $body = $this->makeController()->index();
 
-        $this->assertStringContainsString(lang('WhatsAppMfa.noPhoneSet'), $body);
+        // The view runs this label through ChannelLabel::inject(), which
+        // swaps {channel} for "WhatsApp" (or the SMS label) - so compare
+        // against the same substituted text, not the raw lang() string.
+        $this->assertStringContainsString(ChannelLabel::inject('WhatsAppMfa.noPhoneSet'), $body);
     }
 
     public function testIndexRendersTheVerifiedNumber(): void
@@ -168,7 +193,10 @@ final class WhatsAppSettingsControllerTest extends CIUnitTestCase
         $body = $this->makeController()->verify();
 
         $this->assertIsString($body);
-        $this->assertStringContainsString('1234567', $body);
+        // The page shows the number masked to its last four digits
+        // (+15551234567 -> ********4567), never the full number.
+        $this->assertStringContainsString('********4567', $body);
+        $this->assertStringNotContainsString('5551234567', $body);
     }
 
     public function testConfirmWithCorrectCodeVerifiesTheNumber(): void

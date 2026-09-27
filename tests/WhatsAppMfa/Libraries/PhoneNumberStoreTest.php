@@ -43,6 +43,15 @@ final class PhoneNumberStoreTest extends CIUnitTestCase
     {
         parent::setUp();
 
+        // The Settings library's DatabaseHandler caches every value it has
+        // read in memory on the shared 'settings' service - which is where
+        // PhoneNumberStore keeps verified numbers. $refresh resets the
+        // database between tests, but not that cache, and user ids restart
+        // at 1 after each refresh - so a number verified for "user:1" in
+        // one test was still returned for a brand-new user:1 in the next.
+        // A fresh service per test reads the freshly-reset database.
+        \CodeIgniter\Config\Services::resetSingle('settings');
+
         $this->store = new PhoneNumberStore();
     }
 

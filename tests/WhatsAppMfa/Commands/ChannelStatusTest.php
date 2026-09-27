@@ -25,6 +25,27 @@ final class ChannelStatusTest extends CIUnitTestCase
 
     protected $refresh = true;
 
+    // DatabaseTestTrait's own default ($namespace = 'Tests\Support')
+    // only migrates that one namespace - not Shield's tables, so every
+    // test here failed with "Table 'users' doesn't exist". null migrates
+    // every registered namespace, like `php spark migrate --all`, which
+    // is what every other DB-backed test in this package already uses.
+    protected $namespace = null;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // The Settings library's DatabaseHandler caches every value it has
+        // read in memory on the shared 'settings' service - which is where
+        // PhoneNumberStore keeps verified numbers. $refresh resets the
+        // database between tests, but not that cache, and user ids restart
+        // at 1 after each refresh - so a number verified for "user:1" in
+        // one test was still returned for a brand-new user:1 in the next.
+        // A fresh service per test reads the freshly-reset database.
+        \CodeIgniter\Config\Services::resetSingle('settings');
+    }
+
     private function makeUser(): User
     {
         return fake(UserModel::class, [

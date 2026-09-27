@@ -17,6 +17,13 @@ use Tests\WhatsAppMfa\Support\FakeWhatsAppSender;
 use WhatsAppMfa\Authentication\Actions\WhatsAppActivator;
 use WhatsAppMfa\Controllers\WhatsAppActivatorController;
 use WhatsAppMfa\Libraries\PhoneNumberStore;
+use WhatsAppMfa\Libraries\ChannelLabel;
+
+// Loaded explicitly rather than autoloaded: a typical CodeIgniter app's
+// composer.json only maps Tests\Support\ (to tests/_support), so
+// Tests\WhatsAppMfa\Support\* isn't autoloadable, and PHPUnit only
+// loads *Test.php files itself.
+require_once __DIR__ . '/../../Support/FakeWhatsAppSender.php';
 
 /**
  * Tests WhatsAppActivator's show()/handle()/verify()/getType()/createIdentity()
@@ -84,6 +91,15 @@ final class WhatsAppActivatorTest extends CIUnitTestCase
     {
         parent::setUp();
 
+        // The Settings library's DatabaseHandler caches every value it has
+        // read in memory on the shared 'settings' service - which is where
+        // PhoneNumberStore keeps verified numbers. $refresh resets the
+        // database between tests, but not that cache, and user ids restart
+        // at 1 after each refresh - so a number verified for "user:1" in
+        // one test was still returned for a brand-new user:1 in the next.
+        // A fresh service per test reads the freshly-reset database.
+        \CodeIgniter\Config\Services::resetSingle('settings');
+
         $this->resetServices();
         session()->destroy();
         Services::routes()->loadRoutes();
@@ -112,7 +128,7 @@ final class WhatsAppActivatorTest extends CIUnitTestCase
     {
         return fake(UserModel::class, [
             'email'    => 'whatsapp-activator-test-' . uniqid() . '@example.com',
-            'username' => 'whatsappactivatortest' . uniqid(),
+            'username' => 'waactest' . uniqid(),
             'password' => self::PASSWORD,
             'active'   => $active,
         ]);
@@ -124,6 +140,11 @@ final class WhatsAppActivatorTest extends CIUnitTestCase
 
         /** @var IncomingRequest $request */
         $request = service('request', null, false);
+        // CodeIgniter 4.7+ reads POST from a shared 'superglobals' snapshot
+        // taken the first time anything touches the request, so the
+        // $_POST assignment above is invisible to it - setGlobal() works
+        // on 4.6 and 4.7 alike.
+        $request->setGlobal('post', $post);
 
         return $request;
     }
@@ -212,7 +233,10 @@ final class WhatsAppActivatorTest extends CIUnitTestCase
 
         $body = (new WhatsAppActivator())->show();
 
-        $this->assertStringContainsString(lang('WhatsAppMfa.phoneLabel'), $body);
+        // The view runs this label through ChannelLabel::inject(), which
+        // swaps {channel} for "WhatsApp" (or the SMS label) - so compare
+        // against the same substituted text, not the raw lang() string.
+        $this->assertStringContainsString(ChannelLabel::inject('WhatsAppMfa.phoneLabel'), $body);
     }
 
     public function testHandleRejectsAnInvalidPhoneNumber(): void
