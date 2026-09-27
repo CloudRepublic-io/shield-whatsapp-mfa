@@ -12,9 +12,21 @@
         "whatsapp",
         "otp"
     ],
+    "homepage": "https://github.com/cloudrepublic-io/shield-whatsapp-mfa",
+    "authors": [
+        {
+            "name": "Steve Lyons",
+            "email": "steve@cloudrepublic.io",
+            "role": "Developer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/cloudrepublic-io/shield-whatsapp-mfa/issues",
+        "source": "https://github.com/cloudrepublic-io/shield-whatsapp-mfa"
+    },
     "require": {
         "php": "^8.2",
-        "codeigniter4/framework": "^4.7",
+        "codeigniter4/framework": "^4.6",
         "codeigniter4/shield": "^1.4"
     },
     "autoload": {

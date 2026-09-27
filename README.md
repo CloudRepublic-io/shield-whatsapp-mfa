@@ -17,6 +17,14 @@ your app already has a verified phone number on file for every user;
 with it, a user can turn WhatsApp on for themselves at any time, the
 same as they'd add a passkey or set up an authenticator app.
 
+## Requirements
+
+- PHP 8.2 or later
+- CodeIgniter 4.6 or later
+- CodeIgniter Shield 1.4 or later
+
+Tested on CodeIgniter 4.6 and 4.7, up to PHP 8.5.
+
 ## What's in the box
 
 ```
@@ -417,6 +425,26 @@ WhatsApp delivery has been confirmed for it, and a summary count. Run
 it with `--unconfirmed-only` to see just the users who still need to
 test. It's genuinely read-only: it never sends anything or changes any
 record, so it's safe to run as often as you like while migrating.
+
+**Fixed in the current version, following a real report:** this
+command previously produced no output at all, even with confirmed
+users on file. The root cause - `PhoneNumberStore::listVerificationStatuses()`
+queried the `codeigniter4/settings` package's own `settings` table
+directly, via `db_connect()` with no database group specified. If your
+app's actual Settings storage uses a different database group than
+whichever one `db_connect()` treats as "default" - or a customized
+table name - that query would silently return zero rows, no error at
+all. Rather than continuing to guess at the exact mismatch, this method
+now reuses `getVerifiedPhoneNumber()`/`hasConfirmedWhatsAppDelivery()`
+directly - the exact same, already-proven `service('settings')` calls
+every other part of this class already depends on - so there's no
+second, separate assumption about the Settings library's own storage
+details left to get wrong. The trade-off: this loads every user via
+`UserModel::findAll()` rather than querying only the ones with a
+verified number directly, doing more work than strictly necessary for
+a very large user base - acceptable here specifically because this is
+an occasional, developer-run diagnostic command, not something called
+on every request.
 
 **Confirming which user's number matches which record deliberately
 compares the actual number, not just a boolean flag.** If a user later
@@ -905,6 +933,56 @@ tests/WhatsAppMfa/
                                                 forceWhatsAppChannel()'s own override behavior
   Commands/ChannelStatusTest.php           <- the whatsapp-mfa:channel-status CLI command itself
 ```
+
+### Fixes from running the suite on CodeIgniter 4.7 / PHP 8.5
+
+- **`Class "Tests\WhatsAppMfa\Support\FakeWhatsAppSender" not found`**
+  (and the same for `TestableTwilioWhatsAppSender`). A typical
+  CodeIgniter app only autoloads `Tests\Support\` from `tests/_support`,
+  and PHPUnit loads only `*Test.php` files itself. Each test file now
+  uses `require_once` to load the support classes it needs. If you'd
+  rather autoload them, add `"Tests\\": "tests/"` to `autoload-dev` in
+  your app's `composer.json`. The `require_once` lines are harmless
+  either way.
+- **`Table 'users' doesn't exist` in `ChannelStatusTest`.** This was the
+  only database test missing `protected $namespace = null;`, so only the
+  default `Tests\Support` migrations ran and Shield's tables were never
+  created. It now has that line.
+- **A verified number from one test leaking into the next.** This showed
+  up in `PhoneNumberStoreTest` and in the "unverified user passes
+  through" step-up test. `PhoneNumberStore` keeps numbers in the
+  Settings library, which caches every value it has read on the shared
+  `settings` service. `$refresh` resets the database between tests but
+  not that cache, and user ids start at 1 again after each refresh. A
+  number verified for `user:1` in one test was therefore still returned
+  for the next test's brand-new `user:1`. Every database-backed test now
+  calls `Services::resetSingle('settings')` in `setUp()`. This only
+  affects tests: a real request gets a fresh service anyway.
+- **Username too long.** Shield's `users.username` is `VARCHAR(30)`, and
+  `uniqid()` adds 13 characters. The longer prefixes are now `waactest`,
+  `wasettest` and `wasutest`.
+- **`--unconfirmed-only` ignored unless typed on the real command line
+  (a real bug, fixed in `src/Commands/ChannelStatus.php`).** The command
+  read the flag only through `CLI::getOption()`, which sees the actual
+  process's arguments. When the command was run any other way, through
+  `command('whatsapp-mfa:channel-status --unconfirmed-only')` (as its
+  test does) or `$this->call()` from another command, the flag was
+  silently dropped and every user was listed. Typing it after
+  `php spark` always worked. The command now also checks `$params`,
+  where CodeIgniter passes options in every case.
+- **Tests asserting on text the views had since changed.** Two tests
+  still looked for the raw `{channel} number` / `You haven't verified a
+  {channel} number yet.` strings. The views run those through
+  `ChannelLabel::inject()`, so the page actually says "WhatsApp" (or the
+  SMS label), and the tests now compare against the same substituted
+  text. Two others looked for `1234567` in pages that deliberately show
+  the number masked to its last four digits (`********4567`). They now
+  check for the masked form, and that the full number is *not* on the
+  page.
+- **POST data invisible on CodeIgniter 4.7+.** From 4.7, a request reads
+  POST data from a shared `superglobals` snapshot, taken the first time
+  anything touches the request. The tests' request helpers now also call
+  `$request->setGlobal('post', $post)`, which works on 4.6 and 4.7.
 
 ### Setup
 
